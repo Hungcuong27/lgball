@@ -1,0 +1,385 @@
+/* Responsive Design for Telegram Mini App */
+
+/* iPhone 13 and similar mobile devices */
+@media screen and (max-width: 428px) {
+  .mobile-hidden {
+    display: none !important;
+  }
+  
+  .mobile-full-width {
+    width: 100% !important;
+  }
+  
+  .mobile-text-center {
+    text-align: center !important;
+  }
+  
+  .mobile-padding {
+    padding: 16px !important;
+  }
+  
+  .mobile-margin {
+    margin: 16px !important;
+  }
+}
+
+/* Landscape orientation for iPhone */
+@media screen and (orientation: landscape) and (max-height: 428px) {
+  .landscape-hidden {
+    display: none !important;
+  }
+  
+  .landscape-compact {
+    padding: 8px !important;
+    margin: 8px !important;
+  }
+  
+  .landscape-horizontal {
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+  }
+  
+  .landscape-small-text {
+    font-size: 14px !important;
+  }
+  
+  .landscape-small-title {
+    font-size: 20px !important;
+    margin-bottom: 12px !important;
+  }
+}
+
+/* iPhone 13 Pro Max and larger phones */
+@media screen and (min-width: 428px) and (max-width: 926px) {
+  .tablet-hidden {
+    display: none !important;
+  }
+}
+
+/* Landscape orientation */
+@media screen and (orientation: landscape) and (max-height: 428px) {
+  .landscape-hidden {
+    display: none !important;
+  }
+  
+  .landscape-compact {
+    padding: 8px !important;
+    margin: 8px !important;
+  }
+}
+
+/* Telegram Web App specific styles */
+.telegram-webapp {
+  /* Prevent zoom on input focus */
+  :is(input), :is(select), :is(textarea) {
+    font-size: 16px !important;
+  }
+  
+  /* Safe area for iPhone X and newer */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* Smooth scrolling for mobile */
+* {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Prevent horizontal scroll */
+html, body {
+  overflow-x: hidden;
+  position: relative;
+  width: 100%;
+}
+
+/* Custom scrollbar for webkit browsers */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #181c2b;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #666;
+}
+
+/* Hide scrollbar for specific containers */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Touch-friendly buttons */
+.touch-button {
+  min-height: 44px;
+  min-width: 44px;
+  touch-action: manipulation;
+}
+
+/* Loading states */
+.loading {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* Animation classes */
+.fade-in {
+  animation: fadeIn 0.3s ease-in;
+}
+
+.slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Ball card animations */
+.ball-card {
+  transition: all 0.3s ease-in-out;
+}
+
+.ball-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 16px 40px rgba(0,0,0,0.5) !important;
+}
+
+.ball-card.opening {
+  animation: ballShake 0.6s ease-in-out infinite;
+}
+
+@keyframes ballShake {
+  0%, 100% { 
+    transform: rotate(0deg) scale(1); 
+  }
+  25% { 
+    transform: rotate(-5deg) scale(1.05); 
+  }
+  50% { 
+    transform: rotate(0deg) scale(1.1); 
+  }
+  75% { 
+    transform: rotate(5deg) scale(1.05); 
+  }
+}
+
+/* Mobile navigation */
+.mobile-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: linear-gradient(135deg, #23284a 0%, #181c2b 100%);
+  border-top: 1px solid #444;
+  padding: 12px 16px;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+}
+
+/* Stats cards responsive */
+.stats-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+@media screen and (max-width: 428px) {
+  .stats-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}
+
+/* Ball cards grid */
+.ball-cards-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  max-width: 100%;
+}
+
+@media screen and (max-width: 428px) {
+  .ball-cards-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+}
+
+@media screen and (max-width: 320px) {
+  .ball-cards-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Landscape ball cards */
+@media screen and (orientation: landscape) and (max-height: 428px) {
+  .ball-cards-grid {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+  
+  .ball-card {
+    min-width: 120px !important;
+    padding: 12px !important;
+  }
+  
+  .ball-card img {
+    width: 60px !important;
+    height: 60px !important;
+  }
+  
+  .ball-card h3 {
+    font-size: 12px !important;
+    margin: 8px 0 !important;
+  }
+  
+  .ball-card button {
+    font-size: 10px !important;
+    padding: 6px 12px !important;
+  }
+}
+
+/* Modal responsive */
+.modal-content {
+  width: 90%;
+  max-width: 500px;
+  margin: 20px auto;
+  background: linear-gradient(135deg, #23284a 0%, #181c2b 100%);
+  border-radius: 16px;
+  padding: 24px;
+  border: 1px solid #444;
+}
+
+@media screen and (max-width: 428px) {
+  .modal-content {
+    width: 95%;
+    margin: 10px auto;
+    padding: 20px;
+    border-radius: 12px;
+  }
+}
+
+/* Form elements responsive */
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-input {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid #444;
+  border-radius: 8px;
+  background: #23284a;
+  color: #fff;
+  font-size: 16px;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: #ffb300;
+  box-shadow: 0 0 0 2px rgba(255, 179, 0, 0.2);
+}
+
+/* Button responsive */
+.btn {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 16px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #ffb300 0%, #ff8c00 100%);
+  color: #23284a;
+}
+
+.btn-secondary {
+  background: linear-gradient(135deg, #23284a 0%, #181c2b 100%);
+  color: #fff;
+  border: 1px solid #444;
+}
+
+.btn-danger {
+  background: linear-gradient(135deg, #ff4d4f 0%, #ff6b6b 100%);
+  color: #fff;
+}
+
+@media screen and (max-width: 428px) {
+  .btn {
+    padding: 10px 20px;
+    font-size: 14px;
+    min-height: 40px;
+  }
+}
+
+/* Typography responsive */
+.text-title {
+  font-size: 48px;
+  font-weight: bold;
+  margin-bottom: 40px;
+}
+
+.text-subtitle {
+  font-size: 24px;
+  font-weight: bold;
+  margin-bottom: 24px;
+}
+
+.text-body {
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+@media screen and (max-width: 428px) {
+  .text-title {
+    font-size: 32px;
+    margin-bottom: 24px;
+  }
+  
+  .text-subtitle {
+    font-size: 18px;
+    margin-bottom: 16px;
+  }
+  
+  .text-body {
+    font-size: 14px;
+  }
+} 

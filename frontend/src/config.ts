@@ -1,4 +1,4 @@
-export const RECEIVER_WALLET = 'UQB14j_IIPCosJBEzELeQ1gTYEG2n7uThAWEIvJGGg4rkmGZ';
-export const BACKEND_API = 'http://192.168.3.10:5000/api'; 
+// Cấu hình URLs - có thể thay đổi theo môi trường
+export const RECEIVER_WALLET = import.meta.env.VITE_RECEIVER_WALLET; 
 
 
