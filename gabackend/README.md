@@ -1,39 +1,43 @@
 # GA Backend
 
-Backend API cho ứng dụng GA, được deploy trên Render.
+Backend API cho ứng dụng GA, chạy với ngrok để expose ra internet.
 
-## Cấu hình Environment Variables trên Render
+## Setup và Chạy
 
-Để deploy thành công, bạn cần cấu hình các environment variables sau trong Render dashboard:
-
-### Required Variables:
-- `MONGO_URI`: Connection string đến MongoDB
-- `DB_NAME`: Tên database MongoDB
-
-### Optional Variables:
-- `TON_NETWORK`: Network TON (mainnet/testnet)
-- `TON_PRIVATE_KEY`: Private key cho TON transactions
-
-## Deploy lên Render
-
-1. Push code lên GitHub repository
-2. Tạo account trên [Render](https://render.com)
-3. Tạo new Web Service
-4. Connect với GitHub repository
-5. Cấu hình:
-   - **Name**: gabackend
-   - **Environment**: Python
-   - **Build Command**: `chmod +x build.sh && ./build.sh`
-   - **Start Command**: `gunicorn wsgi:app`
-6. Thêm Environment Variables
-7. Deploy
-
-## Local Development
-
+### 1. Tạo Virtual Environment
 ```bash
-cd gabackend
+python3 -m venv venv
+source venv/bin/activate  # Linux/Mac
+# hoặc
+venv\Scripts\activate  # Windows
+```
+
+### 2. Cài đặt Dependencies
+```bash
 pip install -r requirements.txt
-python api/index.py
+```
+
+### 3. Cấu hình Environment Variables
+Tạo file `.env` trong thư mục `api/` với nội dung:
+```
+MONGO_URI=your_mongodb_connection_string
+DB_NAME=your_database_name
+TON_NETWORK=mainnet
+TON_PRIVATE_KEY=your_private_key
+```
+
+### 4. Chạy với ngrok
+```bash
+./run_with_ngrok.sh
+```
+
+Hoặc chạy thủ công:
+```bash
+# Terminal 1: Chạy Flask app
+python3 api/index.py
+
+# Terminal 2: Chạy ngrok
+ngrok http 5000
 ```
 
 ## API Endpoints
@@ -48,4 +52,10 @@ python api/index.py
 - `POST /api/open-chest` - Mở chest
 - `GET /api/collection` - Lấy collection
 - `GET /api/history` - Lấy lịch sử
-- `GET /api/open-history` - Lấy lịch sử mở ball 
+- `GET /api/open-history` - Lấy lịch sử mở ball
+
+## Lưu ý
+
+- Ngrok sẽ tạo URL public để truy cập API từ internet
+- URL sẽ thay đổi mỗi lần restart ngrok (trừ khi dùng ngrok Pro)
+- Đảm bảo MongoDB đang chạy và có thể kết nối được 
