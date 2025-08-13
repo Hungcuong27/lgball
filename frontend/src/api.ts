@@ -1,5 +1,5 @@
-// Sử dụng Vercel API Routes để proxy qua ngrok
-const API_BASE = '/api';
+// API base: ưu tiên cấu hình build-time, fallback '/api' (dùng khi có proxy)
+const API_BASE = (import.meta as any)?.env?.VITE_BACKEND_API || '/api';
 
 export async function registerUser(address: string, referrer?: string) {
   const res = await fetch(`${API_BASE}/user`, {
@@ -106,3 +106,31 @@ export async function getHistory(address: string) {
   const res = await fetch(`${API_BASE}/history?address=${address}`);
   return await res.json();
 } 
+
+export async function checkin(address: string) {
+  const res = await fetch(`${API_BASE}/checkin`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address })
+  });
+  return await res.json();
+}
+
+export async function claimDailyTon(address: string) {
+  const res = await fetch(`${API_BASE}/claim-daily-ton`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address })
+  });
+  return await res.json();
+}
+
+export async function getCheckinHistory(address: string) {
+  const res = await fetch(`${API_BASE}/checkin-history?address=${encodeURIComponent(address)}`);
+  return await res.json();
+}
+
+export async function getDailyTonHistory(address: string) {
+  const res = await fetch(`${API_BASE}/daily-ton-history?address=${encodeURIComponent(address)}`);
+  return await res.json();
+}

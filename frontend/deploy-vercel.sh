@@ -31,27 +31,27 @@ if [[ -z "${NGROK_PUBLIC_URL}" ]]; then
 fi
 
 # Thiết lập env cho build + deploy
-# Không cần VITE_BACKEND_API nữa vì sẽ dùng proxy
+export VITE_BACKEND_API="${NGROK_PUBLIC_URL}/api"
 export NGROK_URL="${NGROK_PUBLIC_URL}"
-export VITE_RECEIVER_WALLET="${VITE_RECEIVER_WALLET:-UQDTTSZtaO5a7mfon5nT-6SotVNtgXGq1iNx1zcNuE57Qtof}"
+# export VITE_RECEIVER_WALLET="${VITE_RECEIVER_WALLET:-UQB14j_IIPCosJBEzELeQ1gTYEG2n7uThAWEIvJGGg4rkmGZ}"
+export VITE_RECEIVER_WALLET="${VITE_RECEIVER_WALLET:-UQDbLaP-XqxSTEFSPiuM-wscTjxYOSlil7C2VVg2SVRQ3UgM}"
 echo "✅ NGROK_URL=${NGROK_PUBLIC_URL}"
-echo "✅ VITE_RECEIVER_WALLET=${VITE_RECEIVER_WALLET}"
+echo "✅ VITE_BACKEND_API=${VITE_BACKEND_API}"
 
 # Cài deps + build để Vercel thấy thư mục api/
 echo "📦 Installing deps & building..."
 npm ci || npm install
 npm run build
 
-# Deploy với NGROK_URL để proxy function sử dụng
+# Deploy không dùng --prebuilt để include serverless functions
 echo "🌐 Deploying lên Vercel..."
 vercel --prod \
-  --env NGROK_URL="${NGROK_PUBLIC_URL}" \
-  --env VITE_RECEIVER_WALLET="${VITE_RECEIVER_WALLET}"
+  --env VITE_BACKEND_API="${VITE_BACKEND_API}" \
+  --env VITE_RECEIVER_WALLET="${VITE_RECEIVER_WALLET}" \
+  --env NGROK_URL="${NGROK_URL}"
 
 echo "🎉 Deploy hoàn tất!"
 echo "📱 Kiểm tra URL trong output trên"
 echo ""
 echo "⚠️  Lưu ý: Nếu ngrok URL thay đổi, cần cập nhật trong Vercel Dashboard:"
-echo "   Settings > Environment Variables > NGROK_URL"
-echo ""
-echo "🔧 API calls sẽ được proxy qua /api/* đến backend thông qua NGROK_URL" 
+echo "   Settings > Environment Variables > NGROK_URL" 
