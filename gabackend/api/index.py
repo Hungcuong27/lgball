@@ -3,8 +3,9 @@ from flask_cors import CORS
 import sys
 import os
 from dotenv import load_dotenv
+from datetime import datetime, timedelta
 
-from models import add_card, get_collection, get_history, create_user, get_user, get_referrals, add_transaction, get_transactions, add_open_history, get_open_history, increase_balance, decrease_balance, get_referral_commissions, users_col, encode_referral_uuid
+from models import add_card, get_collection, get_history, create_user, get_user, get_referrals, add_transaction, get_transactions, add_open_history, get_open_history, increase_balance, decrease_balance, get_referral_commissions, users_col, encode_referral_uuid, add_checkin, get_checkin_history, get_daily_ton_history, db
 
 # Function để decode UUID về wallet address
 def decode_referral_uuid(uuid):
@@ -29,30 +30,6 @@ def decode_referral_uuid(uuid):
         print(f"[ERROR] decode_referral_uuid: {e}")
     return None
 
-# Function để encode wallet address thành UUID
-def encode_referral_uuid(address):
-    """
-    Encode wallet address thành UUID (giống logic frontend)
-    """
-    # Tạo hash từ wallet address để có UUID cố định cho mỗi user
-    hash_val = 0
-    for i in range(len(address)):
-        char = ord(address[i])
-        hash_val = ((hash_val << 5) - hash_val) + char
-        hash_val = hash_val & hash_val  # Convert to 32bit integer
-    
-    # Chuyển thành base64-like string
-    chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-    result = ''
-    current_hash = abs(hash_val)
-    
-    for i in range(8):
-        result += chars[current_hash % len(chars)]
-        current_hash = current_hash // len(chars)
-        # Nếu current_hash = 0, tạo hash mới từ index
-        if current_hash == 0:
-            current_hash = abs(hash_val + i * 31)
-    return result
 import random
 import time
 from ton_utils import send_ton_onchain
@@ -71,6 +48,50 @@ CORS(app)
 @app.route('/api/test', methods=['GET'])
 def test():
     return jsonify({'status': 'ok', 'message': 'API is working!'})
+
+@app.route('/api/test-daily-ton', methods=['GET'])
+def test_daily_ton():
+    """Test endpoint để kiểm tra daily TON history API"""
+    try:
+        address = request.args.get('address', 'test')
+        print(f"[TEST] Testing daily TON history for address: {address}")
+        
+        # Kiểm tra collections
+        collections = db.list_collection_names()
+        print(f"[TEST] Available collections: {collections}")
+        
+        # Kiểm tra user
+        user = get_user(address) if address != 'test' else None
+        print(f"[TEST] User found: {user is not None}")
+        
+        # Kiểm tra daily_ton_claims collection
+        if 'daily_ton_claims' in collections:
+            claims_count = db['daily_ton_claims'].count_documents({})
+            print(f"[TEST] daily_ton_claims count: {claims_count}")
+        else:
+            print("[TEST] daily_ton_claims collection does not exist")
+        
+        # Kiểm tra checkins collection
+        if 'checkins' in collections:
+            checkins_count = db['checkins'].count_documents({})
+            print(f"[TEST] checkins count: {checkins_count}")
+        else:
+            print("[TEST] checkins collection does not exist")
+        
+        return jsonify({
+            'status': 'ok',
+            'message': 'Test completed',
+            'collections': collections,
+            'user_exists': user is not None,
+            'daily_ton_claims_count': db['daily_ton_claims'].count_documents({}) if 'daily_ton_claims' in collections else 0,
+            'checkins_count': db['checkins'].count_documents({}) if 'checkins' in collections else 0
+        })
+        
+    except Exception as e:
+        print(f"[TEST ERROR] {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 def api_response(func):
     def wrapper(*args, **kwargs):
@@ -449,8 +470,6 @@ def open_chest():
     
 
     # Lấy danh sách player card theo chest_type từ DB
-    client = MongoClient(MONGO_URI)
-    db = client[DB_NAME]
     player_cards_col = db['player_cards']
     cards = list(player_cards_col.find({'ball_type': chest_type}))
     if not cards:
@@ -542,6 +561,301 @@ def webhook():
         requests.post(f"{URL}/sendMessage", json=payload)
 
     return f"oke", 200
+
+# Checkin system
+@app.route('/api/checkin', methods=['POST'])
+@api_response
+def checkin():
+    """API để user checkin hàng ngày - mỗi ngày một lần"""
+    try:
+        data = request.json
+        address = data.get('address')
+        
+        print(f"[DEBUG] checkin called with address: {address}")
+        
+        if not address:
+            return jsonify({'error': 'Address is required'}), 400
+        
+        # Kiểm tra user có tồn tại không
+        user = get_user(address)
+        if not user:
+            print(f"[DEBUG] User not found for address: {address}")
+            return jsonify({'error': 'User not found'}), 404
+        
+        print(f"[DEBUG] User found: {user.get('address')}")
+        
+        # Thực hiện checkin
+        checkin_result, message = add_checkin(address)
+        
+        if checkin_result is None:
+            print(f"[DEBUG] Checkin failed: {message}")
+            return jsonify({'error': message, 'ok': False}), 400
+        
+        print(f"[DEBUG] Checkin successful: {checkin_result}")
+        
+        # Lấy thông tin user cập nhật
+        updated_user = get_user(address)
+        
+        # Lấy thông tin từ collection
+        collection = updated_user.get('collection', {})
+        checkin_day = collection.get('checkin_day', 1)
+        last_checkin_date = collection.get('last_checkin_date', '')
+        total_ball = collection.get('ball', 0)
+        
+        print(f"[DEBUG] Updated user info - checkin_day: {checkin_day}, total_ball: {total_ball}")
+        
+        return jsonify({
+            'ok': True,
+            'message': message,
+            'checkin_day': checkin_day,
+            'last_checkin_date': last_checkin_date,
+            'ball_added': checkin_result['reward'],
+            'total_ball': total_ball
+        })
+        
+    except Exception as e:
+        print(f"[ERROR] Error in checkin API: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
+
+@app.route('/api/checkin-history', methods=['GET'])
+@api_response
+def checkin_history():
+    """API để lấy lịch sử checkin của user"""
+    try:
+        address = request.args.get('address')
+        
+        if not address:
+            return jsonify({'error': 'Address parameter is required'}), 400
+        
+        # Kiểm tra user có tồn tại không
+        user = get_user(address)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Lấy lịch sử checkin
+        checkins = get_checkin_history(address)
+        
+        # Chuyển đổi format cho frontend
+        formatted_checkins = []
+        for checkin in checkins:
+            try:
+                # Sử dụng week_day đã được tính toán trong get_checkin_history
+                if 'week_day' in checkin:
+                    day = checkin['week_day']
+                else:
+                    # Fallback: tính toán ngày trong tuần (1-7) dựa trên thứ 2 của tuần
+                    checkin_time = checkin['timestamp']
+                    checkin_date = datetime.utcfromtimestamp(checkin_time)
+                    
+                    # Tính thứ 2 của tuần chứa checkin này
+                    monday = checkin_date - timedelta(days=checkin_date.weekday())
+                    monday_start = int(monday.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+                    
+                    # Tính ngày trong tuần (1-7, với 1 = thứ 2)
+                    days_since_monday = (checkin_time - monday_start) // 86400
+                    day = days_since_monday + 1
+                
+                formatted_checkins.append({
+                    'day': day,
+                    'ball_added': checkin['reward'],
+                    'timestamp': checkin['timestamp']
+                })
+            except (KeyError, TypeError, ValueError) as e:
+                print(f"Error processing checkin: {e}, checkin data: {checkin}")
+                continue
+        
+        # Sắp xếp theo thời gian mới nhất
+        formatted_checkins.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+        return jsonify(formatted_checkins)
+        
+    except Exception as e:
+        print(f"Error in checkin_history API: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
+
+@app.route('/api/daily-ton-history', methods=['GET'])
+@api_response
+def daily_ton_history():
+    """API để lấy lịch sử daily TON của user"""
+    try:
+        address = request.args.get('address')
+        
+        if not address:
+            return jsonify({'error': 'Address parameter is required'}), 400
+        
+        # Kiểm tra user có tồn tại không
+        user = get_user(address)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Lấy lịch sử checkin
+        checkins = get_checkin_history(address, limit=100)
+        
+        # Lấy daily TON claims nếu có
+        daily_ton_claims = []
+        try:
+            if 'daily_ton_claims' in db.list_collection_names():
+                daily_ton_claims = list(db['daily_ton_claims'].find({'address': address}).sort('timestamp', -1))
+        except Exception as e:
+            print(f"Error accessing daily_ton_claims collection: {e}")
+            daily_ton_claims = []
+        
+        # Chuyển đổi format cho frontend
+        formatted_history = []
+        
+        # Thêm checkin rewards (1 ball = 0.001 TON)
+        for checkin in checkins:
+            try:
+                if 'reward' in checkin and 'timestamp' in checkin:
+                    formatted_history.append({
+                        'ton_added': float(checkin['reward']) / 1000,  # Chuyển từ ball sang TON (1 ball = 0.001 TON)
+                        'timestamp': checkin['timestamp'],
+                        'type': 'checkin'
+                    })
+            except (KeyError, TypeError, ValueError) as e:
+                print(f"Error processing checkin: {e}, checkin data: {checkin}")
+                continue
+        
+        # Thêm daily TON claims
+        for claim in daily_ton_claims:
+            try:
+                if 'ton_added' in claim and 'timestamp' in claim:
+                    formatted_history.append({
+                        'ton_added': float(claim['ton_added']),
+                        'timestamp': claim['timestamp'],
+                        'type': 'daily_claim'
+                    })
+            except (KeyError, TypeError, ValueError) as e:
+                print(f"Error processing claim: {e}, claim data: {claim}")
+                continue
+        
+        # Sắp xếp theo thời gian mới nhất
+        formatted_history.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+        return jsonify(formatted_history)
+        
+    except Exception as e:
+        print(f"Error in daily_ton_history API: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
+
+@app.route('/api/claim-daily-ton', methods=['POST'])
+@api_response
+def claim_daily_ton():
+    """API để user claim daily TON reward - mỗi ngày một lần"""
+    try:
+        data = request.json
+        address = data.get('address')
+        
+        print(f"[DEBUG] claim_daily_ton called with address: {address}")
+        
+        if not address:
+            return jsonify({'error': 'Address is required'}), 400
+        
+        # Kiểm tra user có tồn tại không
+        user = get_user(address)
+        if not user:
+            print(f"[DEBUG] User not found for address: {address}")
+            return jsonify({'error': 'User not found'}), 404
+        
+        print(f"[DEBUG] User found: {user.get('address')}, ton_daily: {user.get('ton_daily', 0)}")
+        
+        # Kiểm tra xem user đã claim TON hôm nay chưa
+        current_time = int(time.time())
+        today_start = current_time - (current_time % 86400)  # 00:00:00 hôm nay
+        today_end = today_start + 86400  # 23:59:59 hôm nay
+        
+        print(f"[DEBUG] Current time: {current_time}, today_start: {today_start}, today_end: {today_end}")
+        
+        # Tạo collection daily_ton_claims nếu chưa có
+        try:
+            if 'daily_ton_claims' not in db.list_collection_names():
+                print("[DEBUG] Creating daily_ton_claims collection")
+                db.create_collection('daily_ton_claims')
+                print("[DEBUG] daily_ton_claims collection created successfully")
+            else:
+                print("[DEBUG] daily_ton_claims collection already exists")
+        except Exception as e:
+            print(f"[ERROR] Error creating daily_ton_claims collection: {e}")
+            return jsonify({'error': 'Database error'}), 500
+        
+        # Kiểm tra xem đã claim hôm nay chưa
+        try:
+            existing_claim = db['daily_ton_claims'].find_one({
+                'address': address,
+                'timestamp': {'$gte': today_start, '$lt': today_end}
+            })
+            
+            if existing_claim:
+                print(f"[DEBUG] User already claimed today: {existing_claim}")
+                return jsonify({'error': 'Đã claim TON hôm nay', 'ok': False}), 400
+                
+            print("[DEBUG] No existing claim found for today")
+        except Exception as e:
+            print(f"[ERROR] Error checking existing claim: {e}")
+            return jsonify({'error': 'Database error'}), 500
+        
+        # Tính daily TON reward (dựa trên ton_daily của user)
+        # Logic: 10% của ton_daily, tối thiểu 0.1 TON
+        user_ton_daily = user.get('ton_daily', 0)
+        daily_ton_reward = max(0.1, user_ton_daily * 0.1)  # Tối thiểu 0.1 TON
+        
+        print(f"[DEBUG] user_ton_daily: {user_ton_daily}, daily_ton_reward: {daily_ton_reward}")
+        
+        # Lưu claim record
+        claim_record = {
+            'address': address,
+            'ton_added': daily_ton_reward,
+            'timestamp': current_time,
+            'user_ton_daily': user_ton_daily
+        }
+        
+        print(f"[DEBUG] Claim record to insert: {claim_record}")
+        
+        try:
+            result = db['daily_ton_claims'].insert_one(claim_record)
+            print(f"[DEBUG] Claim record inserted with ID: {result.inserted_id}")
+            claim_record['_id'] = result.inserted_id
+        except Exception as e:
+            print(f"[ERROR] Error inserting claim record: {e}")
+            return jsonify({'error': 'Database error'}), 500
+        
+        # Cập nhật balance của user
+        try:
+            update_result = users_col.update_one(
+                {'address': address},
+                {'$inc': {'balance': daily_ton_reward}}
+            )
+            print(f"[DEBUG] Balance update result: {update_result.modified_count} documents modified")
+        except Exception as e:
+            print(f"[ERROR] Error updating user balance: {e}")
+            # Rollback claim record nếu update balance thất bại
+            try:
+                db['daily_ton_claims'].delete_one({'_id': claim_record['_id']})
+                print("[DEBUG] Claim record rolled back due to balance update failure")
+            except:
+                print("[ERROR] Failed to rollback claim record")
+            return jsonify({'error': 'Database error'}), 500
+        
+        print(f"[DEBUG] Claim daily TON successful for {address}: {daily_ton_reward} TON")
+        
+        return jsonify({
+            'ok': True,
+            'message': 'Claim daily TON thành công',
+            'ton_added': daily_ton_reward,
+            'user_ton_daily': user_ton_daily
+        })
+        
+    except Exception as e:
+        print(f"[ERROR] Error in claim_daily_ton API: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
 # Vercel serverless function handler
 def handler(request, context):

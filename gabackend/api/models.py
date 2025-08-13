@@ -235,4 +235,188 @@ def decrease_balance(address, amount):
     users_col.update_one({'address': address}, {'$inc': {'balance': -amount}})
 
 def increase_balance(address, amount):
-    users_col.update_one({'address': address}, {'$inc': {'balance': amount}}) 
+    users_col.update_one({'address': address}, {'$inc': {'balance': amount}})
+
+# Checkin system
+def add_checkin(address, reward=100):
+    """Thêm checkin mới cho user - mỗi ngày một lần"""
+    checkin_record = {
+        'address': address,
+        'reward': reward,
+        'timestamp': int(time.time())
+    }
+    
+    # Tạo collection checkins nếu chưa có
+    if 'checkins' not in db.list_collection_names():
+        db.create_collection('checkins')
+    
+    # Kiểm tra xem user đã checkin hôm nay chưa
+    today_start = int(time.time()) - (int(time.time()) % 86400)  # 00:00:00 hôm nay
+    today_end = today_start + 86400  # 23:59:59 hôm nay
+    
+    existing_checkin = db['checkins'].find_one({
+        'address': address,
+        'timestamp': {'$gte': today_start, '$lt': today_end}
+    })
+    
+    if existing_checkin:
+        return None, "Đã checkin hôm nay"
+    
+    # Thêm checkin mới
+    db['checkins'].insert_one(checkin_record)
+    
+    # Tính toán checkin_day và cập nhật collection
+    from datetime import datetime, timedelta
+    
+    current_time = int(time.time())
+    now = datetime.utcnow()
+    
+    # Tính thứ 2 của tuần hiện tại (00:00:00)
+    monday = now - timedelta(days=now.weekday())
+    monday_start = int(monday.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    
+    # Lấy tất cả checkins của user trong tuần hiện tại
+    week_checkins = list(db['checkins'].find({
+        'address': address,
+        'timestamp': {'$gte': monday_start}
+    }).sort('timestamp', 1))
+    
+    # Kiểm tra xem có bỏ lỡ ngày nào không
+    checkin_day = 1  # Mặc định bắt đầu từ ngày 1
+    
+    if len(week_checkins) > 1:
+        # Kiểm tra xem các checkin có liên tiếp không
+        for i in range(1, len(week_checkins)):
+            prev_checkin = week_checkins[i-1]
+            curr_checkin = week_checkins[i]
+            
+            # Tính số ngày giữa 2 checkin
+            days_diff = (curr_checkin['timestamp'] - prev_checkin['timestamp']) // 86400
+            
+            if days_diff > 1:
+                # Nếu bỏ lỡ 1 ngày trở lên, reset về ngày 1
+                checkin_day = 1
+                break
+            else:
+                # Nếu liên tiếp, tăng ngày
+                checkin_day = i + 1
+        else:
+            # Nếu tất cả đều liên tiếp
+            checkin_day = len(week_checkins)
+    elif len(week_checkins) == 1:
+        # Chỉ có 1 checkin trong tuần
+        checkin_day = 1
+    
+    # Cập nhật collection với ball reward và thông tin checkin
+    # Sử dụng upsert để tạo collection nếu chưa có
+    users_col.update_one(
+        {'address': address},
+        {
+            '$inc': {
+                'collection.ball': reward,  # Cộng ball vào collection.ball
+                'ton_daily': reward  # Cộng ball vào ton_daily (để tính daily TON reward)
+            },
+            '$set': {
+                'collection.checkin_day': checkin_day,
+                'collection.last_checkin_date': datetime.utcfromtimestamp(current_time).strftime('%Y-%m-%d')
+            }
+        },
+        upsert=True  # Tạo document nếu chưa có
+    )
+    
+    return checkin_record, "Checkin thành công"
+
+def get_checkin_history(address, limit=30):
+    """Lấy lịch sử checkin của user"""
+    if 'checkins' not in db.list_collection_names():
+        return []
+    
+    checkins = list(db['checkins'].find({'address': address}).sort('timestamp', -1).limit(limit))
+    
+    # Tính toán streak và thống kê
+    if checkins:
+        # Sắp xếp theo thời gian tăng dần để tính streak
+        sorted_checkins = sorted(checkins, key=lambda x: x['timestamp'])
+        current_streak = 0
+        longest_streak = 0
+        temp_streak = 0
+        
+        # Tính toán ngày trong tuần cho mỗi checkin
+        for checkin in sorted_checkins:
+            try:
+                # Tính thứ 2 của tuần chứa checkin này
+                checkin_time = checkin['timestamp']
+                checkin_date = datetime.utcfromtimestamp(checkin_time)
+                monday = checkin_date - timedelta(days=checkin_date.weekday())
+                monday_start = int(monday.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+                
+                # Tính ngày trong tuần (1-7, với 1 = thứ 2)
+                days_since_monday = (checkin_time - monday_start) // 86400
+                day = days_since_monday + 1
+                
+                # Thêm thông tin ngày trong tuần vào checkin
+                checkin['week_day'] = day
+                checkin['week_start'] = monday_start
+            except Exception as e:
+                print(f"Error calculating week day for checkin: {e}")
+                checkin['week_day'] = 1
+                checkin['week_start'] = 0
+        
+        # Tính current streak (từ checkin gần nhất)
+        if sorted_checkins:
+            latest_checkin = sorted_checkins[-1]
+            latest_timestamp = latest_checkin['timestamp']
+            today_start = int(time.time()) - (int(time.time()) % 86400)
+            
+            if latest_timestamp >= today_start:
+                # Nếu checkin hôm nay, tính streak từ hôm qua
+                current_streak = 1
+                for i in range(len(sorted_checkins) - 2, -1, -1):
+                    curr_timestamp = sorted_checkins[i]['timestamp']
+                    prev_timestamp = sorted_checkins[i-1]['timestamp'] if i > 0 else curr_timestamp
+                    days_diff = (curr_timestamp - prev_timestamp) // 86400
+                    if days_diff == 1:
+                        current_streak += 1
+                    else:
+                        break
+            else:
+                current_streak = 0
+        
+        # Thêm thông tin streak vào mỗi checkin
+        for checkin in checkins:
+            checkin['current_streak'] = current_streak
+            checkin['longest_streak'] = longest_streak
+    
+    return checkins
+
+def get_daily_ton_history(address, limit=30):
+    """Lấy lịch sử daily TON của user"""
+    if 'checkins' not in db.list_collection_names():
+        return []
+    
+    # Lấy tất cả checkins của user
+    all_checkins = list(db['checkins'].find({'address': address}).sort('timestamp', -1))
+    
+    # Nhóm theo ngày và tính tổng TON mỗi ngày
+    daily_ton = {}
+    for checkin in all_checkins:
+        timestamp = checkin['timestamp']
+        day_start = timestamp - (timestamp % 86400)  # 00:00:00 của ngày đó
+        day_key = day_start
+        
+        if day_key not in daily_ton:
+            daily_ton[day_key] = {
+                'date': day_key,
+                'total_ton': 0,
+                'checkin_count': 0
+            }
+        
+        daily_ton[day_key]['total_ton'] += checkin['reward']
+        daily_ton[day_key]['checkin_count'] += 1
+    
+    # Chuyển thành list và sắp xếp theo ngày mới nhất
+    daily_ton_list = list(daily_ton.values())
+    daily_ton_list.sort(key=lambda x: x['date'], reverse=True)
+    
+    # Giới hạn số lượng kết quả
+    return daily_ton_list[:limit] 
