@@ -89,7 +89,6 @@ const LANGUAGES = {
     wallet: 'Deposit/Withdraw TON',
     balance: 'Balance',
     daily_reward: 'Daily Reward',
-    total_withdrawn: 'Total Withdrawn',
     open_ball: 'Open Ball',
     see_player_cards: 'See player cards info',
     not_enough_ton: 'Not enough TON to open ball!',
@@ -171,7 +170,6 @@ const LANGUAGES = {
     wallet: 'TON 입출금',
     balance: '잔액',
     daily_reward: '일일 보상',
-    total_withdrawn: '총 출금액',
     open_ball: '공 열기',
     see_player_cards: '선수 카드 정보 보기',
     not_enough_ton: '공을 열기 위한 TON이 부족합니다!',
@@ -1253,38 +1251,7 @@ function App() {
                   {(userInfo?.ton_daily || 0).toFixed(4)} TON
                 </div>
               </div>
-              <div className={responsive.isMobile ? 'force-horizontal-stats-card' : ''} style={{ 
-                background: 'linear-gradient(135deg, #23284a 0%, #181c2b 100%)', 
-                borderRadius: 16, 
-                padding: 24, 
-                minWidth: 200, 
-                textAlign: 'center',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
-                border: '1px solid #444',
-                transition: 'all 0.3s ease',
-                position: 'relative',
-                overflow: 'hidden'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = 'translateY(-4px)';
-                e.currentTarget.style.boxShadow = '0 12px 32px rgba(0,0,0,0.4)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = 'translateY(0)';
-                e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.3)';
-              }}
-              >
-                <div style={{ 
-                  position: 'absolute', 
-                  top: 0, 
-                  left: 0, 
-                  right: 0, 
-                  height: 4, 
-                  background: 'linear-gradient(90deg, #2196F3 0%, #1976D2 100%)' 
-                }}></div>
-                <div style={{ fontSize: 16, color: '#aaa', marginBottom: 8 }}>{t.total_withdrawn}</div>
-                <div style={{ fontSize: 32, color: '#2196F3', fontWeight: 'bold' }}>{(userInfo?.ton_withdrawn || 0).toFixed(4)} TON</div>
-              </div>
+
             </div>
             
 
@@ -2222,4 +2189,4 @@ function App() {
   );
 }
 
-export default App; 
+export default App;
