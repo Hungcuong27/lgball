@@ -86,7 +86,7 @@ const LANGUAGES = {
     home: 'Home',
     referral: 'Referral',
     history: 'History',
-    wallet: 'Deposit/Withdraw TON',
+    wallet: 'Deposit/Withdraw',
     balance: 'Balance',
     daily_reward: 'Daily Reward',
     open_ball: 'Open Ball',
@@ -167,7 +167,7 @@ const LANGUAGES = {
     home: '홈',
     referral: '추천',
     history: '히스토리',
-    wallet: 'TON 입출금',
+    wallet: '입출금',
     balance: '잔액',
     daily_reward: '일일 보상',
     open_ball: '공 열기',
@@ -928,10 +928,12 @@ function App() {
       {/* Navigation */}
       <div style={{ 
         display: 'flex', 
+        flexDirection: responsive.isMobile ? 'column' : 'row',
         alignItems: 'center', 
         background: 'linear-gradient(135deg, #23284a 0%, #181c2b 100%)', 
         padding: styles.nav.padding, 
-        height: styles.nav.height,
+        height: responsive.isMobile ? 'auto' : styles.nav.height,
+        minHeight: responsive.isMobile ? 'auto' : styles.nav.height,
         boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
         borderBottom: '1px solid #444',
         position: 'sticky',
@@ -941,8 +943,18 @@ function App() {
           paddingTop: 'env(safe-area-inset-top)',
         })
       }}>
-        <div style={{ flex: 1, display: 'flex', gap: styles.nav.gap, overflowX: 'auto', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-          {NAVS.map(n => (
+        {/* Main Navigation Row */}
+        <div style={{ 
+          flex: 1, 
+          display: 'flex', 
+          gap: styles.nav.gap, 
+          overflowX: 'auto', 
+          scrollbarWidth: 'none', 
+          msOverflowStyle: 'none',
+          width: '100%',
+          justifyContent: responsive.isMobile ? 'flex-start' : 'flex-start'
+        }}>
+          {NAVS.map((n, index) => (
             <button
               key={n.key}
               onClick={() => {
@@ -962,7 +974,8 @@ function App() {
                 boxShadow: nav === n.key ? '0 4px 12px rgba(255,179,0,0.3)' : 'none',
                 transform: nav === n.key ? 'translateY(-2px)' : 'translateY(0)',
                 whiteSpace: 'nowrap',
-                minWidth: responsive.isMobile ? 'auto' : 'auto'
+                minWidth: responsive.isMobile ? 'auto' : 'auto',
+                flexShrink: index === 0 ? 0 : 1
               }}
               onMouseEnter={(e) => {
                 if (nav !== n.key) {
@@ -982,111 +995,247 @@ function App() {
           ))}
         </div>
         
-        {/* Whitepaper Button */}
-        <WhitepaperButton 
-          variant="outline" 
-          size="small"
-          className="nav-whitepaper-btn"
-        >
-          📄 Whitepaper
-        </WhitepaperButton>
-        
-        {!responsive.isMobile && <TonConnectButton />}
-
-        {wallet && (
-          <>
-            {/* Language Switcher Dropdown */}
-            <div ref={langRef} style={{ marginLeft: 12, position: 'relative', display: 'inline-block', userSelect: 'none' }}>
-              <button
-                onClick={() => setLangDropdown(v => !v)}
-                style={{ 
-                  background: 'linear-gradient(135deg, #ffb300 0%, #ff8c00 100%)', 
-                  color: '#23284a', 
-                  border: 'none', 
-                  borderRadius: styles.button.borderRadius, 
-                  padding: responsive.isMobile ? '6px 12px' : '8px 18px', 
-                  fontWeight: 'bold', 
-                  cursor: 'pointer', 
-                  minWidth: responsive.isMobile ? 60 : 100,
-                  transition: 'all 0.3s ease',
-                  boxShadow: '0 4px 12px rgba(255,179,0,0.3)',
-                  fontSize: responsive.isMobile ? 12 : styles.button.fontSize
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = '0 6px 16px rgba(255,179,0,0.4)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(255,179,0,0.3)';
-                }}
+        {/* Secondary Navigation Row for Mobile */}
+        {responsive.isMobile && (
+          <div style={{ 
+            display: 'flex', 
+            gap: 12, 
+            justifyContent: 'space-between', 
+            alignItems: 'center',
+            marginTop: 12,
+            paddingTop: 12,
+            borderTop: '1px solid #444',
+            width: '100%'
+          }}>
+            {/* Left side - empty space for balance */}
+            <div style={{ flex: 1 }}></div>
+            
+            {/* Right side - Whitepaper and Language */}
+            <div style={{ 
+              display: 'flex', 
+              gap: 8, 
+              alignItems: 'center',
+              flexShrink: 0
+            }}>
+              {/* Whitepaper Button */}
+              <WhitepaperButton 
+                variant="outline" 
+                size="small"
+                className="nav-whitepaper-btn"
               >
-                {lang === 'en' ? 'EN' : 'KO'} ▼
-              </button>
-              {langDropdown && (
-                <div style={{ 
-                  position: 'absolute', 
-                  top: '120%', 
-                  right: 0, 
-                  background: 'linear-gradient(135deg, #23284a 0%, #181c2b 100%)', 
-                  borderRadius: 12, 
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.4)', 
-                  minWidth: responsive.isMobile ? 80 : 130, 
-                  overflow: 'hidden',
-                  border: '1px solid #444',
-                  animation: 'fadeInUp 0.3s ease-out'
-                }}>
-                  <div
-                    onClick={() => { setLang('en'); setLangDropdown(false); }}
-                    style={{ 
-                      padding: responsive.isMobile ? '8px 12px' : '12px 18px', 
-                      cursor: 'pointer', 
-                      color: lang === 'en' ? '#ffb300' : '#fff', 
-                      background: lang === 'en' ? 'rgba(255,179,0,0.1)' : 'transparent', 
-                      fontWeight: lang === 'en' ? 'bold' : 'normal',
-                      transition: 'all 0.2s ease',
-                      fontSize: responsive.isMobile ? 12 : 14
-                    }}
-                    onMouseEnter={(e) => {
-                      if (lang !== 'en') {
-                        e.currentTarget.style.background = 'rgba(255,179,0,0.05)';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (lang !== 'en') {
-                        e.currentTarget.style.background = 'transparent';
-                      }
-                    }}
-                  >
-                    English
+                📄 Whitepaper
+              </WhitepaperButton>
+              
+              {wallet && (
+                <>
+                  {/* Language Switcher Dropdown */}
+                  <div ref={langRef} style={{ position: 'relative', display: 'inline-block', userSelect: 'none' }}>
+                    <button
+                      onClick={() => setLangDropdown(v => !v)}
+                      style={{ 
+                        background: 'linear-gradient(135deg, #ffb300 0%, #ff8c00 100%)', 
+                        color: '#23284a', 
+                        border: 'none', 
+                        borderRadius: styles.button.borderRadius, 
+                        padding: '6px 12px', 
+                        fontWeight: 'bold', 
+                        cursor: 'pointer', 
+                        minWidth: 60,
+                        transition: 'all 0.3s ease',
+                        boxShadow: '0 4px 12px rgba(255,179,0,0.3)',
+                        fontSize: 12
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.transform = 'translateY(-2px)';
+                        e.currentTarget.style.boxShadow = '0 6px 16px rgba(255,179,0,0.4)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = 'translateY(0)';
+                        e.currentTarget.style.boxShadow = '0 4px 12px rgba(255,179,0,0.3)';
+                      }}
+                    >
+                      {lang === 'en' ? 'EN' : 'KO'} ▼
+                    </button>
+                    {langDropdown && (
+                      <div style={{ 
+                        position: 'absolute', 
+                        top: '120%', 
+                        right: 0, 
+                        background: 'linear-gradient(135deg, #23284a 0%, #181c2b 100%)', 
+                        borderRadius: 12, 
+                        boxShadow: '0 8px 24px rgba(0,0,0,0.4)', 
+                        minWidth: 80, 
+                        overflow: 'hidden',
+                        border: '1px solid #444',
+                        animation: 'fadeInUp 0.3s ease-out'
+                      }}>
+                        <div
+                          onClick={() => { setLang('en'); setLangDropdown(false); }}
+                          style={{ 
+                            padding: '8px 12px', 
+                            cursor: 'pointer', 
+                            color: lang === 'en' ? '#ffb300' : '#fff', 
+                            background: lang === 'en' ? 'rgba(255,179,0,0.1)' : 'transparent', 
+                            fontWeight: lang === 'en' ? 'bold' : 'normal',
+                            transition: 'all 0.2s ease',
+                            fontSize: 12
+                          }}
+                          onMouseEnter={(e) => {
+                            if (lang !== 'en') {
+                              e.currentTarget.style.background = 'rgba(255,179,0,0.05)';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (lang !== 'en') {
+                              e.currentTarget.style.background = 'transparent';
+                            }
+                          }}
+                        >
+                          English
+                        </div>
+                        <div
+                          onClick={() => { setLang('ko'); setLangDropdown(false); }}
+                          style={{ 
+                            padding: '8px 12px', 
+                            cursor: 'pointer', 
+                            color: lang === 'ko' ? '#ffb300' : '#fff', 
+                            background: lang === 'ko' ? 'rgba(255,179,0,0.1)' : 'transparent', 
+                            fontWeight: lang === 'ko' ? 'bold' : 'normal',
+                            transition: 'all 0.2s ease',
+                            fontSize: 12
+                          }}
+                          onMouseEnter={(e) => {
+                            if (lang !== 'ko') {
+                              e.currentTarget.style.background = 'rgba(255,179,0,0.05)';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (lang !== 'ko') {
+                              e.currentTarget.style.background = 'transparent';
+                            }
+                          }}
+                        >
+                          한국어
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div
-                    onClick={() => { setLang('ko'); setLangDropdown(false); }}
-                    style={{ 
-                      padding: responsive.isMobile ? '8px 12px' : '12px 18px', 
-                      cursor: 'pointer', 
-                      color: lang === 'ko' ? '#ffb300' : '#fff', 
-                      background: lang === 'ko' ? 'rgba(255,179,0,0.1)' : 'transparent', 
-                      fontWeight: lang === 'ko' ? 'bold' : 'normal',
-                      transition: 'all 0.2s ease',
-                      fontSize: responsive.isMobile ? 12 : 14
-                    }}
-                    onMouseEnter={(e) => {
-                      if (lang !== 'ko') {
-                        e.currentTarget.style.background = 'rgba(255,179,0,0.05)';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (lang !== 'ko') {
-                        e.currentTarget.style.background = 'transparent';
-                      }
-                    }}
-                  >
-                    한국어
-                  </div>
-                </div>
+                </>
               )}
             </div>
+          </div>
+        )}
+        
+        {/* Desktop Navigation Row */}
+        {!responsive.isMobile && (
+          <>
+            {/* Whitepaper Button */}
+            <WhitepaperButton 
+              variant="outline" 
+              size="small"
+              className="nav-whitepaper-btn"
+            >
+              📄 Whitepaper
+            </WhitepaperButton>
+            
+            <TonConnectButton />
+
+            {wallet && (
+              <>
+                {/* Language Switcher Dropdown */}
+                <div ref={langRef} style={{ marginLeft: 12, position: 'relative', display: 'inline-block', userSelect: 'none' }}>
+                  <button
+                    onClick={() => setLangDropdown(v => !v)}
+                    style={{ 
+                      background: 'linear-gradient(135deg, #ffb300 0%, #ff8c00 100%)', 
+                      color: '#23284a', 
+                      border: 'none', 
+                      borderRadius: styles.button.borderRadius, 
+                      padding: '8px 18px', 
+                      fontWeight: 'bold', 
+                      cursor: 'pointer', 
+                      minWidth: 100,
+                      transition: 'all 0.3s ease',
+                      boxShadow: '0 4px 12px rgba(255,179,0,0.3)',
+                      fontSize: styles.button.fontSize
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                      e.currentTarget.style.boxShadow = '0 6px 16px rgba(255,179,0,0.4)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = 'translateY(0)';
+                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(255,179,0,0.3)';
+                    }}
+                  >
+                    {lang === 'en' ? 'EN' : 'KO'} ▼
+                  </button>
+                  {langDropdown && (
+                    <div style={{ 
+                      position: 'absolute', 
+                      top: '120%', 
+                      right: 0, 
+                      background: 'linear-gradient(135deg, #23284a 0%, #181c2b 100%)', 
+                      borderRadius: 12, 
+                      boxShadow: '0 8px 24px rgba(0,0,0,0.4)', 
+                      minWidth: 130, 
+                      overflow: 'hidden',
+                      border: '1px solid #444',
+                      animation: 'fadeInUp 0.3s ease-out'
+                    }}>
+                      <div
+                        onClick={() => { setLang('en'); setLangDropdown(false); }}
+                        style={{ 
+                          padding: '12px 18px', 
+                          cursor: 'pointer', 
+                          color: lang === 'en' ? '#ffb300' : '#fff', 
+                          background: lang === 'en' ? 'rgba(255,179,0,0.1)' : 'transparent', 
+                          fontWeight: lang === 'en' ? 'bold' : 'normal',
+                          transition: 'all 0.2s ease',
+                          fontSize: 14
+                        }}
+                        onMouseEnter={(e) => {
+                          if (lang !== 'en') {
+                            e.currentTarget.style.background = 'rgba(255,179,0,0.05)';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (lang !== 'en') {
+                            e.currentTarget.style.background = 'transparent';
+                          }
+                        }}
+                      >
+                        English
+                      </div>
+                      <div
+                        onClick={() => { setLang('ko'); setLangDropdown(false); }}
+                        style={{ 
+                          padding: '12px 18px', 
+                          cursor: 'pointer', 
+                          color: lang === 'ko' ? '#ffb300' : '#fff', 
+                          background: lang === 'ko' ? 'rgba(255,179,0,0.1)' : 'transparent', 
+                          fontWeight: lang === 'ko' ? 'bold' : 'normal',
+                          transition: 'all 0.2s ease',
+                          fontSize: 14
+                        }}
+                        onMouseEnter={(e) => {
+                          if (lang !== 'ko') {
+                            e.currentTarget.style.background = 'rgba(255,179,0,0.05)';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (lang !== 'ko') {
+                            e.currentTarget.style.background = 'transparent';
+                          }
+                        }}
+                      >
+                        한국어
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
           </>
         )}
       </div>
