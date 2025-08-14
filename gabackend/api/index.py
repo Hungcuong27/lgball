@@ -7,28 +7,21 @@ from datetime import datetime, timedelta
 
 from models import add_card, get_collection, get_history, create_user, get_user, get_referrals, add_transaction, get_transactions, add_open_history, get_open_history, increase_balance, decrease_balance, get_referral_commissions, users_col, encode_referral_uuid, add_checkin, get_checkin_history, get_daily_ton_history, db
 
-# Function để decode UUID về wallet address
-def decode_referral_uuid(uuid):
+# Function to decode UUID back to wallet address
+def decode_referral_uuid(uuid_str):
+    """Decode referral UUID to get wallet address.
+    This function searches for a user in the current user set
+    with the value encode_referral_uuid(address).
     """
-    Decode referral UUID về wallet address tương ứng bằng cách so khớp
-    với giá trị encode_referral_uuid(address) trong tập người dùng hiện tại.
-    """
-    if not uuid:
-        return None
-    # Trường hợp đặc biệt: admin
-    if uuid == 'admin':
-        return 'admin'
     try:
-        # Chỉ lấy trường address để tối ưu
+        # Only get address field for optimization
         for user in users_col.find({}, { 'address': 1 }):
             address = user.get('address')
-            if not address:
-                continue
-            if encode_referral_uuid(address) == uuid:
+            if address and encode_referral_uuid(address) == uuid_str:
                 return address
+        return None
     except Exception as e:
-        print(f"[ERROR] decode_referral_uuid: {e}")
-    return None
+        return None
 
 import random
 import time
@@ -51,55 +44,41 @@ def test():
 
 @app.route('/api/test-daily-ton', methods=['GET'])
 def test_daily_ton():
-    """Test endpoint để kiểm tra daily TON history API"""
-    try:
-        address = request.args.get('address', 'test')
-        print(f"[TEST] Testing daily TON history for address: {address}")
-        
-        # Kiểm tra collections
-        collections = db.list_collection_names()
-        print(f"[TEST] Available collections: {collections}")
-        
-        # Kiểm tra user
-        user = get_user(address) if address != 'test' else None
-        print(f"[TEST] User found: {user is not None}")
-        
-        # Kiểm tra daily_ton_claims collection
-        if 'daily_ton_claims' in collections:
-            claims_count = db['daily_ton_claims'].count_documents({})
-            print(f"[TEST] daily_ton_claims count: {claims_count}")
-        else:
-            print("[TEST] daily_ton_claims collection does not exist")
-        
-        # Kiểm tra checkins collection
-        if 'checkins' in collections:
-            checkins_count = db['checkins'].count_documents({})
-            print(f"[TEST] checkins count: {checkins_count}")
-        else:
-            print("[TEST] checkins collection does not exist")
-        
-        return jsonify({
-            'status': 'ok',
-            'message': 'Test completed',
-            'collections': collections,
-            'user_exists': user is not None,
-            'daily_ton_claims_count': db['daily_ton_claims'].count_documents({}) if 'daily_ton_claims' in collections else 0,
-            'checkins_count': db['checkins'].count_documents({}) if 'checkins' in collections else 0
-        })
-        
-    except Exception as e:
-        print(f"[TEST ERROR] {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+    """Test endpoint to check daily TON history API"""
+    address = request.args.get('address', 'test')
+    
+    # Check user
+    user = get_user(address) if address != 'test' else None
+    
+    # Check collections
+    collections = db.list_collection_names()
+    
+    # Check checkin_history collection
+    if 'checkin_history' in collections:
+        checkin_count = db['checkin_history'].count_documents({})
+    else:
+        checkin_count = 0
+    
+    # Check daily_ton_history collection
+    if 'daily_ton_history' in collections:
+        ton_count = db['daily_ton_history'].count_documents({})
+    else:
+        ton_count = 0
+    
+    return jsonify({
+        'status': 'ok',
+        'address': address,
+        'user_exists': user is not None,
+        'checkin_history_count': db['checkin_history'].count_documents({}) if 'checkin_history' in collections else 0,
+        'daily_ton_history_count': db['daily_ton_history'].count_documents({}) if 'daily_ton_history' in collections else 0
+    })
 
 def api_response(func):
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except Exception as e:
-            print("[ERROR]", e)
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Internal server error'}), 500
     wrapper.__name__ = func.__name__
     return wrapper
 
@@ -115,35 +94,35 @@ def convert_objectid(obj):
 @app.route('/api/user', methods=['POST'])
 @api_response
 def api_create_user():
-    data = request.json
-    print(f"[DEBUG] data: {data}")
-    raw_address = data.get('address')
-    # Hỗ trợ cả key 'ref' và 'referrer' từ frontend
-    referrer_uuid = data.get('referrer') or data.get('ref') or request.args.get('ref')  # Có thể là UUID hoặc wallet address
+    data = request.get_json()
+    address = data.get('address')
     
-    # Sử dụng raw_address làm address chính (backend sẽ tự xử lý friendly_address)
-    address = raw_address
+    # Support both 'ref' and 'referrer' keys from frontend
+    referrer_uuid = data.get('referrer') or data.get('ref') or request.args.get('ref')  # Could be UUID or wallet address
     
-    # Nếu referrer là UUID, decode để lấy wallet address
-    if referrer_uuid and len(referrer_uuid) == 8:  # UUID có 8 ký tự
+    if not address:
+        return jsonify({'error': 'Address is required'}), 400
+    
+    # If referrer is UUID, decode to get wallet address
+    if referrer_uuid and len(referrer_uuid) == 8:  # UUID has 8 characters
         referrer = decode_referral_uuid(referrer_uuid)
-    elif referrer_uuid == 'admin':  # Xử lý trường hợp admin
-        # Tìm user có address là admin hoặc tạo admin user
+    else:
+        # Find admin user or create admin user
         admin_user = users_col.find_one({'address': 'admin'})
         if not admin_user:
-            # Tạo admin user nếu chưa có
+            # Create admin user if not exists
             users_col.insert_one({
                 'address': 'admin',
-                'referrer': None,
                 'ton_daily': 0,
                 'ton_withdrawn': 0,
                 'referral_earnings': 0,
-                'created_at': int(time.time()),
-                'balance': 0
+                'collection': {'Legend': 0, 'Epic': 0, 'Rare': 0, 'Common': 0, 'ball': 0},
+                'checkin_day': 1,
+                'last_checkin_date': '',
+                'referral_uuid': encode_referral_uuid('admin'),
+                'friendly_address': 'admin'
             })
-        referrer = 'admin'
-    else:
-        referrer = referrer_uuid  # Nếu không phải UUID, giữ nguyên
+        referrer = referrer_uuid  # If not UUID, keep as is
     
     user = create_user(address, referrer)
     return jsonify(convert_objectid(user))
@@ -151,86 +130,139 @@ def api_create_user():
 @app.route('/api/resolve-ref', methods=['GET'])
 @api_response
 def api_resolve_ref():
-    """Trả về địa chỉ người giới thiệu từ mã ref (UUID) hoặc địa chỉ trực tiếp.
-
-    Query params:
-      - ref hoặc uuid: mã ref 8 ký tự hoặc 'admin' hoặc địa chỉ ví
+    """Return referrer address from ref code (UUID) or direct address.
+    If ref is UUID, decode and return wallet address.
+    If ref is already wallet address, return as is.
     """
-    ref_param = request.args.get('ref') or request.args.get('uuid')
-    if not ref_param:
-        return jsonify({'error': 'Missing ref or uuid parameter'}), 400
-
-    # Xử lý giá trị truyền vào
-    if ref_param == 'admin':
-        ref_address = 'admin'
-    elif len(ref_param) == 8:
-        ref_address = decode_referral_uuid(ref_param)
-    else:
-        # Có thể người dùng truyền thẳng địa chỉ ví
-        ref_address = ref_param
-
-    if not ref_address:
-        return jsonify({'found': False}), 404
-
-    # Thử lấy thông tin user nếu có
-    user = get_user(ref_address)
-    response = {
-        'found': True,
-        'address': ref_address,
-        'referral_uuid': 'admin' if ref_address == 'admin' else encode_referral_uuid(ref_address),
-        'display_address': ref_address
-    }
-    # Không ép trả toàn bộ user vì có thể nhạy cảm; frontend chỉ cần hiển thị
-    return jsonify(convert_objectid(response))
+    ref = request.args.get('ref')
+    if not ref:
+        return jsonify({'error': 'Ref parameter is required'}), 400
+    
+    # Try to decode if it's UUID
+    if len(ref) == 8:
+        try:
+            ref_address = decode_referral_uuid(ref)
+            if ref_address:
+                # Try to get user info if available
+                user = get_user(ref_address)
+                if user:
+                    return jsonify({
+                        'ref': ref,
+                        'address': ref_address,
+                        'friendly_address': user.get('friendly_address', ref_address)
+                    })
+                else:
+                    return jsonify({
+                        'ref': ref,
+                        'address': ref_address,
+                        'friendly_address': ref_address
+                    })
+            else:
+                return jsonify({'error': 'Invalid ref code'}), 400
+        except Exception as e:
+            return jsonify({'error': 'Invalid ref code'}), 400
+    
+    # User might pass wallet address directly
+    if ref.startswith('0:') or ref.startswith('EQ'):
+        # Try to get user info if available
+        user = get_user(ref)
+        if user:
+            return jsonify({
+                'ref': ref,
+                'address': ref,
+                'friendly_address': user.get('friendly_address', ref)
+            })
+        else:
+            return jsonify({
+                'ref': ref,
+                'address': ref,
+                'friendly_address': ref
+            })
+    
+    return jsonify({'error': 'Invalid ref format'}), 400
 
 @app.route('/api/user', methods=['GET'])
 @api_response
 def api_get_user():
     address = request.args.get('address')
-    # Nhận ref/uuid từ query để backfill khi user đã tồn tại
-    incoming_ref = request.args.get('ref') or request.args.get('referrer')
     
-    # Tìm user bằng address gốc (backend sẽ tự xử lý friendly_address)
+    # Receive ref/uuid from query to backfill when user already exists
+    ref_uuid = request.args.get('ref') or request.args.get('uuid')
+    
+    # Find user by original address (backend will handle friendly_address automatically)
     user = get_user(address)
-    # Backfill referrer nếu có ref trên URL và user chưa có referrer
-    if user and incoming_ref and not user.get('referrer'):
+    
+    # If user does not exist, create new
+    if not user:
+        user = create_user(address, ref_uuid)
+    
+    # Backfill referrer if there is a ref on the URL and the user does not have a referrer
+    if user and ref_uuid and not user.get('referrer'):
         decoded_ref = None
-        if incoming_ref == 'admin':
+        if ref_uuid == 'admin':
             decoded_ref = 'admin'
-        elif len(incoming_ref) == 8:
-            decoded_ref = decode_referral_uuid(incoming_ref)
+        elif len(ref_uuid) == 8:
+            decoded_ref = decode_referral_uuid(ref_uuid)
         else:
-            decoded_ref = incoming_ref
+            decoded_ref = ref_uuid
 
-        # Không cho tự ref
+        # Do not allow self-referral
         if decoded_ref and decoded_ref != address:
             try:
-                users_col.update_one({'_id': user['_id']}, {'$set': {'referrer': decoded_ref}})
-                user = get_user(address)
+                users_col.update_one(
+                    {'address': address},
+                    {'$set': {'referrer': decoded_ref}}
+                )
+                user['referrer'] = decoded_ref
             except Exception as e:
-                print(f"[ERROR] backfill referrer in GET /api/user: {e}")
+                # Error backfilling referrer
+                pass
+    
     if user:
-        # Thêm UUID vào response và đồng bộ DB nếu cần
+        # Ensure collection has all necessary information
+        if 'collection' not in user:
+            user['collection'] = {
+                'ball': 0,
+                'checkin_day': 1,
+                'last_checkin_date': '',
+                'Legend': 0,
+                'Epic': 0,
+                'Rare': 0,
+                'Common': 0
+            }
+        else:
+            # Ensure necessary fields have default values
+            if 'ball' not in user['collection']:
+                user['collection']['ball'] = 0
+            if 'checkin_day' not in user['collection']:
+                user['collection']['checkin_day'] = 1
+            if 'last_checkin_date' not in user['collection']:
+                user['collection']['last_checkin_date'] = ''
+        
+        # Add UUID to response and sync DB if needed
         expected_uuid = encode_referral_uuid(address)
         user['referral_uuid'] = expected_uuid
-        user['display_address'] = user.get('friendly_address', address)
         
-        try:
-            if user.get('referral_uuid') != expected_uuid:
-                users_col.update_one({'_id': user['_id']}, {'$set': {'referral_uuid': expected_uuid}})
-                user = get_user(address)
-                user['referral_uuid'] = expected_uuid
-        except Exception as e:
-            print(f"[ERROR] sync referral_uuid in GET /api/user: {e}")
-        # Nếu có người giới thiệu, thêm referrer_uuid để tiện hiển thị
+        # Sync referral_uuid in DB if different
+        if user.get('referral_uuid') != expected_uuid:
+            try:
+                users_col.update_one(
+                    {'address': address},
+                    {'$set': {'referral_uuid': expected_uuid}}
+                )
+            except Exception as e:
+                # Error syncing referral_uuid
+                pass
+        
+        # If there is a referrer, add referrer_uuid for display
         try:
             if user.get('referrer'):
-                if user['referrer'] == 'admin':
-                    user['referrer_uuid'] = 'admin'
-                else:
-                    user['referrer_uuid'] = encode_referral_uuid(user['referrer'])
+                referrer_user = get_user(user['referrer'])
+                if referrer_user and referrer_user.get('referral_uuid'):
+                    user['referrer_uuid'] = referrer_user['referral_uuid']
         except Exception as e:
-            print(f"[ERROR] compute referrer_uuid: {e}")
+            # Error computing referrer_uuid
+            pass
     return jsonify(convert_objectid(user))
 
 @app.route('/api/referrals', methods=['GET'])
@@ -239,14 +271,14 @@ def api_get_referrals():
     address = request.args.get('address')
     refs = get_referrals(address)
     
-    # Thêm referral_link vào response
+    # Add referral_link to response
     response_data = {
         'referrals': refs,
         'referral_link': None
     }
     
     if address:
-        # Lấy user để có referral_uuid
+        # Get user to have referral_uuid
         user = get_user(address)
         if user and user.get('referral_uuid'):
             response_data['referral_link'] = f"https://t.me/LegendballBot/legendball?startapp={user['referral_uuid']}"
@@ -267,10 +299,10 @@ def api_get_referral_uuid():
     if not address:
         return jsonify({'error': 'Missing address parameter'}), 400
 
-    # Sử dụng address gốc (raw) để tạo UUID, giữ nguyên logic hiện tại
+    # Use original address (raw) to create UUID, keep current logic
     uuid = encode_referral_uuid(address)
     
-    # Lấy user để có friendly_address
+    # Get user to have friendly_address
     user = get_user(address)
     response_data = {'address': address, 'referral_uuid': uuid}
     if user and user.get('friendly_address'):
@@ -281,20 +313,20 @@ def api_get_referral_uuid():
 @app.route('/api/referral-link', methods=['GET'])
 @api_response
 def api_get_referral_link():
-    """Tạo referral link hoàn chỉnh cho user"""
+    """Create a complete referral link for the user"""
     address = request.args.get('address')
     if not address:
         return jsonify({'error': 'Missing address parameter'}), 400
 
-    # Lấy user để có friendly_address và referral_uuid
+    # Get user to have friendly_address and referral_uuid
     user = get_user(address)
     if not user:
         return jsonify({'error': 'User not found'}), 404
 
-    # Tạo referral link
+    # Create referral link
     referral_uuid = user.get('referral_uuid')
     if not referral_uuid:
-        # Nếu chưa có referral_uuid, tạo mới
+        # If no referral_uuid, create new
         referral_uuid = encode_referral_uuid(address)
         users_col.update_one({'_id': user['_id']}, {'$set': {'referral_uuid': referral_uuid}})
         user['referral_uuid'] = referral_uuid
@@ -318,42 +350,35 @@ def api_format_address():
         return jsonify({'error': 'Address parameter is required'}), 400
     
     try:
-        # Nếu địa chỉ đã ở dạng user-friendly
+        # If address is already user-friendly
         if address.startswith('UQ') or address.startswith('EQ') or address.startswith('0Q'):
             return jsonify({'formatted_address': address})
         
-        # Nếu là địa chỉ raw (0:...), chuyển đổi sang user-friendly
+        # If it's a raw address (0:...), convert to user-friendly
         if address.startswith('0:'):
-            # Sử dụng API của TON để chuyển đổi
+            # Use TON API to convert
             import requests
             try:
-                print(f"[DEBUG] Calling TON API for address: {address}")
                 response = requests.get(f'https://toncenter.com/api/v3/addressBook?address={address}')
-                print(f"[DEBUG] TON API response status: {response.status_code}")
-                
                 if response.status_code == 200:
                     data = response.json()
-                    print(f"[DEBUG] TON API response data: {data}")
-                    
-                    if address in data and data[address].get('user_friendly'):
-                        user_friendly = data[address]['user_friendly']
-                        print(f"[DEBUG] Extracted user-friendly address: {user_friendly}")
-                        return jsonify({'formatted_address': user_friendly})
+                    if data.get('ok') and address in data:
+                        user_friendly = data[address].get('user_friendly')
+                        if user_friendly:
+                            return jsonify({'formatted_address': user_friendly})
                     else:
-                        print(f"[DEBUG] Address not found in response or no user_friendly field")
-                else:
-                    print(f"[DEBUG] TON API failed with status: {response.status_code}")
-                    
-            except Exception as api_error:
-                print(f"TON API error: {api_error}")
+                        # TON API failed
+                        pass
+            except Exception as e:
+                # Error formatting address
+                pass
             
-            # Fallback: trả về địa chỉ gốc nếu API fail
-            print(f"[DEBUG] Using fallback address: {address}")
+            # Fallback: return original address if API fails
             return jsonify({'formatted_address': address})
         
         return jsonify({'formatted_address': address})
     except Exception as e:
-        print(f"Error formatting address: {e}")
+        # Error formatting address
         return jsonify({'formatted_address': address})  # Fallback to original
 
 @app.route('/api/update-user-address', methods=['POST'])
@@ -363,60 +388,58 @@ def api_update_user_address():
     raw_address = data.get('raw_address')
     user_friendly_address = data.get('user_friendly_address')
     
-    print(f"[DEBUG] Updating user address - Raw: {raw_address}, User-friendly: {user_friendly_address}")
-    
     if not raw_address or not user_friendly_address:
         return jsonify({'error': 'Both raw_address and user_friendly_address are required'}), 400
     
     try:
-        # Kiểm tra xem user có tồn tại không
+        # Check if user exists
         existing_user = users_col.find_one({'address': raw_address})
-        print(f"[DEBUG] Existing user: {existing_user}")
         
         if existing_user:
-            # Cập nhật user trong database với user-friendly address
+            # Update user in database with user-friendly address
             result = users_col.update_one(
                 {'address': raw_address},
-                {'$set': {'user_friendly_address': user_friendly_address}}
+                {'$set': {'friendly_address': user_friendly_address}}
             )
             
-            print(f"[DEBUG] Update result - Modified count: {result.modified_count}")
-            
             if result.modified_count > 0:
-                return jsonify({'status': 'success', 'message': 'User address updated successfully'})
+                return jsonify({'status': 'success', 'message': 'User updated successfully'})
             else:
                 return jsonify({'status': 'success', 'message': 'User found but no changes made'})
         else:
-            # Nếu user chưa tồn tại, tạo mới với user-friendly address
-            print(f"[DEBUG] User not found, creating new user with user-friendly address")
+            # If user does not exist, create new with user-friendly address
             new_user = {
                 'address': raw_address,
-                'user_friendly_address': user_friendly_address,
-                'balance': 0,
+                'friendly_address': user_friendly_address,
                 'ton_daily': 0,
-                'total_withdrawn': 0,
-                'created_at': int(time.time())
+                'ton_withdrawn': 0,
+                'referral_earnings': 0,
+                'collection': {'Legend': 0, 'Epic': 0, 'Rare': 0, 'Common': 0, 'ball': 0},
+                'checkin_day': 1,
+                'last_checkin_date': '',
+                'referral_uuid': encode_referral_uuid(raw_address),
+                'created_at': int(time.time()),
+                'balance': 0
             }
+            
             result = users_col.insert_one(new_user)
-            print(f"[DEBUG] Created new user with ID: {result.inserted_id}")
-            return jsonify({'status': 'success', 'message': 'New user created with user-friendly address'})
+            return jsonify({'status': 'success', 'message': 'User created successfully'})
             
     except Exception as e:
-        print(f"Error updating user address: {e}")
-        return jsonify({'error': f'Failed to update user address: {str(e)}'}), 500
+        return jsonify({'error': 'Error updating user address'}), 500
 
 @app.route('/api/deposit', methods=['POST'])
 @api_response
 def api_deposit():
     data = request.json
 
-    address = data.get('address')  # Sử dụng address gốc từ frontend
+    address = data.get('address')  # Use original address from frontend
     amount = float(data.get('amount'))
     tx_hash = data.get('tx_hash')
     if not tx_hash:
-        return jsonify({'error': 'Thiếu mã giao dịch (tx_hash)'}), 400
+        return jsonify({'error': 'Missing transaction hash (tx_hash)'}), 400
     
-    # Bỏ xác thực blockchain, chỉ lưu vào DB
+    # Bypass blockchain verification, just save to DB
     tx = add_transaction(address, 'deposit', amount, status='success')
     increase_balance(address, amount)
     return jsonify(tx)
@@ -425,30 +448,35 @@ def api_deposit():
 @api_response
 def api_withdraw():
     data = request.json
-    address = data.get('address')  # Sử dụng address gốc từ frontend
+    address = data.get('address')  # Use original address from frontend
     amount = float(data.get('amount'))
     
     try:
-        # Kiểm tra số dư trước khi rút
+        # Check balance before withdrawal
         user = get_user(address)
         
         if not user or user.get('balance', 0) < amount:
-            return jsonify({'error': 'Không đủ TON để rút'}), 400
+            return jsonify({'error': 'Not enough TON to withdraw'}), 400
         
-        # Tạo bản ghi withdraw với status pending và trừ balance ngay
-        tx = add_transaction(address, 'withdraw', amount, status='pending')
+        # Create withdraw record with pending status and deduct balance immediately
+        add_transaction(address, 'withdraw', amount, status='pending')
+
         decrease_balance(address, amount)
         
-        return jsonify({'status': 'success', 'message': 'Withdraw request created successfully'})
+        # Always return success since withdrawal is handled manually
+        return jsonify({
+            'success': True,
+            'message': 'Withdrawal successful!'
+            # 'transaction': tx
+        })
         
     except Exception as e:
-        print(f"Withdraw error: {e}")
-        return jsonify({'error': f'Withdraw failed: {str(e)}'}), 500
+        return jsonify({'error': 'Withdrawal failed'}), 500
 
 @app.route('/api/transactions', methods=['GET'])
 @api_response
 def api_get_transactions():
-    address = request.args.get('address')  # Sử dụng address gốc từ frontend
+    address = request.args.get('address')  # Use original address from frontend
     
     txs = get_transactions(address)
     return jsonify(convert_objectid(txs))
@@ -456,25 +484,45 @@ def api_get_transactions():
 @app.route('/api/open-history', methods=['GET'])
 @api_response
 def api_get_open_history():
-    address = request.args.get('address')  # Sử dụng address gốc từ frontend
+    address = request.args.get('address')  # Use original address from frontend
     
+    # Get open history and limit to 20 most recent
     history = get_open_history(address)
-    return jsonify(convert_objectid(history))
+    
+    # Format history for frontend
+    formatted_history = []
+    
+    # Add open history entries only
+    for entry in history:
+        formatted_history.append({
+            'type': 'ball_opening',
+            'player_card': entry.get('player_card', ''),
+            'card_type': entry.get('ball_type', ''),
+            'ton_reward': entry.get('ton_added', 0),  # Sử dụng ton_added từ DB
+            'timestamp': entry.get('timestamp', 0),
+            'date': datetime.utcfromtimestamp(entry.get('timestamp', 0)).strftime('%Y-%m-%d %H:%M:%S')
+        })
+    
+    # Sort by timestamp (newest first) and limit to 20
+    formatted_history.sort(key=lambda x: x['timestamp'], reverse=True)
+    formatted_history = formatted_history[:20]
+    
+    return jsonify(convert_objectid(formatted_history))
 
 @app.route('/api/open-chest', methods=['POST'])
 @api_response
 def open_chest():
     data = request.json
-    address = data.get('address')  # Sử dụng address gốc từ frontend
+    address = data.get('address')  # Use original address from frontend
     chest_type = data.get('chest_type')
     
 
-    # Lấy danh sách player card theo chest_type từ DB
+    # Get player card list by chest_type from DB
     player_cards_col = db['player_cards']
     cards = list(player_cards_col.find({'ball_type': chest_type}))
     if not cards:
         return jsonify({'error': 'No player cards found for this chest type'}), 400
-    # Random theo tỷ lệ rate
+    # Randomize by rate
     total_rate = sum(c.get('rate', 0) for c in cards)
     r = random.uniform(0, total_rate)
     acc = 0
@@ -485,30 +533,35 @@ def open_chest():
             selected = c
             break
     timestamp = int(time.time())
-    # Lấy user và kiểm tra balance
+    # Get user and check balance
     user = get_user(address)
     price = selected.get('price', 0.5)
     
 
     
     if not user or user.get('balance', 0) < price:
-        return jsonify({'error': 'Không đủ TON để mở bóng'}), 400
+        return jsonify({'error': 'Not enough TON to open chest'}), 400
     decrease_balance(address, price)
-    # Lưu lịch sử
+    # Save history
     add_card(address, selected.get('rarity', ''), chest_type, selected.get('reward', 0), timestamp, price)
     add_open_history(address, chest_type, selected.get('name', ''), selected.get('reward', 0))
+    
+    # Get updated user info to show new ton_daily
+    updated_user = get_user(address)
+    
     return jsonify({
         'player_card': selected.get('name', ''),
         'image': selected.get('image', ''),
         'card_type': selected.get('rarity', ''),
         'reward': selected.get('reward', 0),
-        'timestamp': timestamp
+        'timestamp': timestamp,
+        'new_ton_daily': updated_user.get('ton_daily', 0)  # Trả về ton_daily mới
     })
 
 @app.route('/api/collection', methods=['GET'])
 @api_response
 def collection():
-    address = request.args.get('address')  # Sử dụng address gốc từ frontend
+    address = request.args.get('address')  # Use original address from frontend
     
     result = get_collection(address)
     return jsonify(convert_objectid(result))
@@ -516,7 +569,7 @@ def collection():
 @app.route('/api/history', methods=['GET'])
 @api_response
 def history():
-    address = request.args.get('address')  # Sử dụng address gốc từ frontend
+    address = request.args.get('address')  # Use original address from frontend
     
     result = get_history(address)
     return jsonify(convert_objectid(result))
@@ -534,7 +587,8 @@ def webhook():
 
         message = (
             "🌟 Welcome to *Legendball*!\n\n"
-            "🕹️ A brand new P2E experience awaits you.\n"
+            "⚽️ Legendary Ball – a next-gen gacha game built on the TON Blockchain 🚀!\n"
+            "Win matches, climb the ranks 🏆, and earn real cryptocurrency rewards 💎💰\n\n"
             "🚀 Click the button below to start the game!"
         )
 
@@ -543,10 +597,16 @@ def webhook():
                 [
                     {
                         "text": "🎮 Start Game",
-                        "web_app": {
-                            "url": "https://t.me/LegendballBot/legendball"
-                        }
+                        
+                        "url": "https://t.me/LegendballBot/legendball"
+                        
+                    },
+                    {
+                        "text": "👥 Group chat",
+                        "url": "https://t.me/+y_UbYXByP05kZjBl"
                     }
+
+                
                         ]
             ]
         }
@@ -566,296 +626,273 @@ def webhook():
 @app.route('/api/checkin', methods=['POST'])
 @api_response
 def checkin():
-    """API để user checkin hàng ngày - mỗi ngày một lần"""
+    """API to handle user check-in"""
+    data = request.get_json()
+    address = data.get('address')
+    
+    if not address:
+        return jsonify({'error': 'Address is required'}), 400
+    
     try:
-        data = request.json
-        address = data.get('address')
-        
-        print(f"[DEBUG] checkin called with address: {address}")
-        
-        if not address:
-            return jsonify({'error': 'Address is required'}), 400
-        
-        # Kiểm tra user có tồn tại không
-        user = get_user(address)
-        if not user:
-            print(f"[DEBUG] User not found for address: {address}")
-            return jsonify({'error': 'User not found'}), 404
-        
-        print(f"[DEBUG] User found: {user.get('address')}")
-        
-        # Thực hiện checkin
         checkin_result, message = add_checkin(address)
-        
-        if checkin_result is None:
-            print(f"[DEBUG] Checkin failed: {message}")
-            return jsonify({'error': message, 'ok': False}), 400
-        
-        print(f"[DEBUG] Checkin successful: {checkin_result}")
-        
-        # Lấy thông tin user cập nhật
-        updated_user = get_user(address)
-        
-        # Lấy thông tin từ collection
-        collection = updated_user.get('collection', {})
-        checkin_day = collection.get('checkin_day', 1)
-        last_checkin_date = collection.get('last_checkin_date', '')
-        total_ball = collection.get('ball', 0)
-        
-        print(f"[DEBUG] Updated user info - checkin_day: {checkin_day}, total_ball: {total_ball}")
-        
-        return jsonify({
-            'ok': True,
-            'message': message,
-            'checkin_day': checkin_day,
-            'last_checkin_date': last_checkin_date,
-            'ball_added': checkin_result['reward'],
-            'total_ball': total_ball
-        })
-        
+        if checkin_result:
+            # Get updated user info
+            updated_user = get_user(address)
+            return jsonify({
+                'success': True,
+                'message': message,
+                'checkin_result': checkin_result,
+                'updated_user': updated_user
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': message
+            })
     except Exception as e:
-        print(f"[ERROR] Error in checkin API: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
+        return jsonify({
+            'success': False,
+            'message': 'Check-in failed'
+        }), 500
 
 @app.route('/api/checkin-history', methods=['GET'])
 @api_response
 def checkin_history():
-    """API để lấy lịch sử checkin của user"""
+    """API to get user checkin history from checkin_history collection"""
+    address = request.args.get('address')
+    
+    if not address:
+        return jsonify({'error': 'Address is required'}), 400
+    
     try:
-        address = request.args.get('address')
+        # Check if user already checked in today
+        from datetime import datetime
+        import time
         
-        if not address:
-            return jsonify({'error': 'Address parameter is required'}), 400
+        current_time = int(time.time())
+        now = datetime.utcnow()
+        today_start = int(now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+        today_end = today_start + 86400
         
-        # Kiểm tra user có tồn tại không
-        user = get_user(address)
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
+        checkin_claimed_today = False
+        try:
+            existing_checkin = db['checkin_history'].find_one({
+                'address': address,
+                'timestamp': {'$gte': today_start, '$lt': today_end}
+            })
+            checkin_claimed_today = existing_checkin is not None
+        except Exception as e:
+            # Error checking today's checkin
+            pass
         
-        # Lấy lịch sử checkin
-        checkins = get_checkin_history(address)
+        # Get checkin history
+        checkin_history = []
+        try:
+            if 'checkin_history' in db.list_collection_names():
+                checkin_history = list(db['checkin_history'].find({'address': address}).sort('timestamp', -1))
+        except Exception as e:
+            # Error accessing checkin_history collection
+            pass
         
-        # Chuyển đổi format cho frontend
-        formatted_checkins = []
-        for checkin in checkins:
+        # Format history for frontend
+        formatted_history = []
+        for checkin in checkin_history:
             try:
-                # Sử dụng week_day đã được tính toán trong get_checkin_history
-                if 'week_day' in checkin:
-                    day = checkin['week_day']
-                else:
-                    # Fallback: tính toán ngày trong tuần (1-7) dựa trên thứ 2 của tuần
-                    checkin_time = checkin['timestamp']
-                    checkin_date = datetime.utcfromtimestamp(checkin_time)
-                    
-                    # Tính thứ 2 của tuần chứa checkin này
-                    monday = checkin_date - timedelta(days=checkin_date.weekday())
-                    monday_start = int(monday.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
-                    
-                    # Tính ngày trong tuần (1-7, với 1 = thứ 2)
-                    days_since_monday = (checkin_time - monday_start) // 86400
-                    day = days_since_monday + 1
-                
-                formatted_checkins.append({
-                    'day': day,
-                    'ball_added': checkin['reward'],
-                    'timestamp': checkin['timestamp']
+                formatted_history.append({
+                    'type': 'checkin',
+                    'ball_added': checkin.get('ball_added', 0),
+                    'timestamp': checkin.get('timestamp', 0),
+                    'date': datetime.utcfromtimestamp(checkin.get('timestamp', 0)).strftime('%Y-%m-%d %H:%M:%S')
                 })
-            except (KeyError, TypeError, ValueError) as e:
-                print(f"Error processing checkin: {e}, checkin data: {checkin}")
+            except Exception as e:
+                # Error processing checkin
                 continue
         
-        # Sắp xếp theo thời gian mới nhất
-        formatted_checkins.sort(key=lambda x: x['timestamp'], reverse=True)
-        
-        return jsonify(formatted_checkins)
+        return jsonify({
+            'history': formatted_history,
+            'checkin_claimed_today': checkin_claimed_today
+        })
         
     except Exception as e:
-        print(f"Error in checkin_history API: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
+        return jsonify({
+            'error': 'Failed to get checkin history'
+        }), 500
 
 @app.route('/api/daily-ton-history', methods=['GET'])
 @api_response
 def daily_ton_history():
-    """API để lấy lịch sử daily TON của user"""
+    """API to get user daily TON history from checkin_history and daily_ton_history tables"""
+    address = request.args.get('address')
+    
+    if not address:
+        return jsonify({'error': 'Address is required'}), 400
+    
     try:
-        address = request.args.get('address')
+        # Check if user already claimed TON today
+        from datetime import datetime
+        import time
         
-        if not address:
-            return jsonify({'error': 'Address parameter is required'}), 400
+        current_time = int(time.time())
+        now = datetime.utcnow()
+        today_start = int(now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+        today_end = today_start + 86400
         
-        # Kiểm tra user có tồn tại không
-        user = get_user(address)
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
-        # Lấy lịch sử checkin
-        checkins = get_checkin_history(address, limit=100)
-        
-        # Lấy daily TON claims nếu có
-        daily_ton_claims = []
+        ton_claimed_today = False
         try:
-            if 'daily_ton_claims' in db.list_collection_names():
-                daily_ton_claims = list(db['daily_ton_claims'].find({'address': address}).sort('timestamp', -1))
+            existing_claim = db['daily_ton_history'].find_one({
+                'address': address,
+                'timestamp': {'$gte': today_start, '$lt': today_end}
+            })
+            ton_claimed_today = existing_claim is not None
         except Exception as e:
-            print(f"Error accessing daily_ton_claims collection: {e}")
-            daily_ton_claims = []
+            # Error checking today's TON claim
+            pass
         
-        # Chuyển đổi format cho frontend
+        # Get checkin history
+        checkin_history = []
+        try:
+            if 'checkin_history' in db.list_collection_names():
+                checkin_history = list(db['checkin_history'].find({'address': address}).sort('timestamp', -1))
+        except Exception as e:
+            # Error accessing checkin_history collection
+            pass
+        
+        # Get daily TON history
+        daily_ton_history = []
+        try:
+            if 'daily_ton_history' in db.list_collection_names():
+                daily_ton_history = list(db['daily_ton_history'].find({'address': address}).sort('timestamp', -1))
+        except Exception as e:
+            # Error accessing daily_ton_history collection
+            pass
+        
+        # Format history for frontend
         formatted_history = []
         
-        # Thêm checkin rewards (1 ball = 0.001 TON)
-        for checkin in checkins:
+        # Add checkin entries
+        for checkin in checkin_history:
             try:
-                if 'reward' in checkin and 'timestamp' in checkin:
-                    formatted_history.append({
-                        'ton_added': float(checkin['reward']) / 1000,  # Chuyển từ ball sang TON (1 ball = 0.001 TON)
-                        'timestamp': checkin['timestamp'],
-                        'type': 'checkin'
-                    })
-            except (KeyError, TypeError, ValueError) as e:
-                print(f"Error processing checkin: {e}, checkin data: {checkin}")
+                formatted_history.append({
+                    'type': 'checkin',
+                    'ball_added': checkin.get('ball_added', 0),
+                    'timestamp': checkin.get('timestamp', 0),
+                    'date': datetime.utcfromtimestamp(checkin.get('timestamp', 0)).strftime('%Y-%m-%d %H:%M:%S')
+                })
+            except Exception as e:
+                # Error processing checkin
                 continue
         
-        # Thêm daily TON claims
-        for claim in daily_ton_claims:
+        # Add TON claim entries
+        for ton_record in daily_ton_history:
             try:
-                if 'ton_added' in claim and 'timestamp' in claim:
-                    formatted_history.append({
-                        'ton_added': float(claim['ton_added']),
-                        'timestamp': claim['timestamp'],
-                        'type': 'daily_claim'
-                    })
-            except (KeyError, TypeError, ValueError) as e:
-                print(f"Error processing claim: {e}, claim data: {claim}")
+                formatted_history.append({
+                    'type': 'daily_ton',
+                    'ton_added': ton_record.get('ton_added', 0),
+                    'timestamp': ton_record.get('timestamp', 0),
+                    'date': datetime.utcfromtimestamp(ton_record.get('timestamp', 0)).strftime('%Y-%m-%d %H:%M:%S')
+                })
+            except Exception as e:
+                # Error processing ton record
                 continue
         
-        # Sắp xếp theo thời gian mới nhất
+        # Sort by timestamp (newest first)
         formatted_history.sort(key=lambda x: x['timestamp'], reverse=True)
         
-        return jsonify(formatted_history)
+        return jsonify({
+            'history': formatted_history,
+            'ton_claimed_today': ton_claimed_today
+        })
         
     except Exception as e:
-        print(f"Error in daily_ton_history API: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
+        return jsonify({
+            'error': 'Failed to get daily TON history'
+        }), 500
 
 @app.route('/api/claim-daily-ton', methods=['POST'])
 @api_response
 def claim_daily_ton():
-    """API để user claim daily TON reward - mỗi ngày một lần"""
+    """API to claim daily TON reward"""
+    data = request.get_json()
+    address = data.get('address')
+    
+    if not address:
+        return jsonify({'error': 'Address is required'}), 400
+    
     try:
-        data = request.json
-        address = data.get('address')
-        
-        print(f"[DEBUG] claim_daily_ton called with address: {address}")
-        
-        if not address:
-            return jsonify({'error': 'Address is required'}), 400
-        
-        # Kiểm tra user có tồn tại không
+        # Get user info
         user = get_user(address)
         if not user:
-            print(f"[DEBUG] User not found for address: {address}")
             return jsonify({'error': 'User not found'}), 404
         
-        print(f"[DEBUG] User found: {user.get('address')}, ton_daily: {user.get('ton_daily', 0)}")
+        # Check if user already claimed today
+        from datetime import datetime
+        import time
         
-        # Kiểm tra xem user đã claim TON hôm nay chưa
         current_time = int(time.time())
-        today_start = current_time - (current_time % 86400)  # 00:00:00 hôm nay
-        today_end = today_start + 86400  # 23:59:59 hôm nay
+        now = datetime.utcnow()
+        today_start = int(now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+        today_end = today_start + 86400
         
-        print(f"[DEBUG] Current time: {current_time}, today_start: {today_start}, today_end: {today_end}")
-        
-        # Tạo collection daily_ton_claims nếu chưa có
+        # Create daily_ton_history collection if it doesn't exist
         try:
-            if 'daily_ton_claims' not in db.list_collection_names():
-                print("[DEBUG] Creating daily_ton_claims collection")
-                db.create_collection('daily_ton_claims')
-                print("[DEBUG] daily_ton_claims collection created successfully")
-            else:
-                print("[DEBUG] daily_ton_claims collection already exists")
+            if 'daily_ton_history' not in db.list_collection_names():
+                db.create_collection('daily_ton_history')
         except Exception as e:
-            print(f"[ERROR] Error creating daily_ton_claims collection: {e}")
-            return jsonify({'error': 'Database error'}), 500
+            # Collection creation error
+            pass
         
-        # Kiểm tra xem đã claim hôm nay chưa
-        try:
-            existing_claim = db['daily_ton_claims'].find_one({
-                'address': address,
-                'timestamp': {'$gte': today_start, '$lt': today_end}
-            })
-            
-            if existing_claim:
-                print(f"[DEBUG] User already claimed today: {existing_claim}")
-                return jsonify({'error': 'Đã claim TON hôm nay', 'ok': False}), 400
-                
-            print("[DEBUG] No existing claim found for today")
-        except Exception as e:
-            print(f"[ERROR] Error checking existing claim: {e}")
-            return jsonify({'error': 'Database error'}), 500
+        existing_claim = db['daily_ton_history'].find_one({
+            'address': address,
+            'timestamp': {'$gte': today_start, '$lt': today_end}
+        })
         
-        # Tính daily TON reward (dựa trên ton_daily của user)
-        # Logic: 10% của ton_daily, tối thiểu 0.1 TON
+        if existing_claim:
+            return jsonify({
+                'error': 'Already claimed today',
+                'ton_added': 0
+            }), 400
+        
+        # Calculate daily TON reward
         user_ton_daily = user.get('ton_daily', 0)
-        daily_ton_reward = max(0.1, user_ton_daily * 0.1)  # Tối thiểu 0.1 TON
+        daily_ton_reward = max(0.1, user_ton_daily * 0.1)
         
-        print(f"[DEBUG] user_ton_daily: {user_ton_daily}, daily_ton_reward: {daily_ton_reward}")
-        
-        # Lưu claim record
+        # Create claim record
         claim_record = {
             'address': address,
             'ton_added': daily_ton_reward,
             'timestamp': current_time,
-            'user_ton_daily': user_ton_daily
+            'type': 'daily_claim'
         }
         
-        print(f"[DEBUG] Claim record to insert: {claim_record}")
+        # Insert claim record
+        result = db['daily_ton_history'].insert_one(claim_record)
         
-        try:
-            result = db['daily_ton_claims'].insert_one(claim_record)
-            print(f"[DEBUG] Claim record inserted with ID: {result.inserted_id}")
-            claim_record['_id'] = result.inserted_id
-        except Exception as e:
-            print(f"[ERROR] Error inserting claim record: {e}")
-            return jsonify({'error': 'Database error'}), 500
-        
-        # Cập nhật balance của user
-        try:
-            update_result = users_col.update_one(
-                {'address': address},
-                {'$inc': {'balance': daily_ton_reward}}
-            )
-            print(f"[DEBUG] Balance update result: {update_result.modified_count} documents modified")
-        except Exception as e:
-            print(f"[ERROR] Error updating user balance: {e}")
-            # Rollback claim record nếu update balance thất bại
+        if result.inserted_id:
+            # Update user balance
             try:
-                db['daily_ton_claims'].delete_one({'_id': claim_record['_id']})
-                print("[DEBUG] Claim record rolled back due to balance update failure")
-            except:
-                print("[ERROR] Failed to rollback claim record")
-            return jsonify({'error': 'Database error'}), 500
-        
-        print(f"[DEBUG] Claim daily TON successful for {address}: {daily_ton_reward} TON")
-        
-        return jsonify({
-            'ok': True,
-            'message': 'Claim daily TON thành công',
-            'ton_added': daily_ton_reward,
-            'user_ton_daily': user_ton_daily
-        })
-        
+                users_col.update_one(
+                    {'address': address},
+                    {'$inc': {'balance': daily_ton_reward}}
+                )
+            except Exception as e:
+                # Error updating user balance
+                pass
+            
+            return jsonify({
+                'success': True,
+                'message': 'Daily TON claimed successfully',
+                'ton_added': daily_ton_reward,
+                'user_ton_daily': user_ton_daily
+            })
+        else:
+            return jsonify({
+                'error': 'Failed to record claim'
+            }), 500
+            
     except Exception as e:
-        print(f"[ERROR] Error in claim_daily_ton API: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
+        return jsonify({
+            'error': 'Claim failed'
+        }), 500
 
 # Vercel serverless function handler
 def handler(request, context):

@@ -13,56 +13,47 @@ TON_WALLET_ADDRESS = 'EQD4FPq-PRDieyQKkizFTRt5y1-EId0RzC_P6Xn4S2qYV6Hj'
 TONCENTER_API = "https://toncenter.com/api/v2"
 
 def send_ton_onchain(to_address: str, amount_ton: float, comment: str = ""):
-    """
-    Sử dụng Toncenter API để gửi TON transaction trên mainnet
-    """
-    amount_nano = int(amount_ton * 1e9)
-    
+    """Send TON onchain using Toncenter API"""
     try:
-        print(f"Sending TON transaction on MAINNET:")
-        print(f"  From: {TON_WALLET_ADDRESS}")
-        print(f"  To: {to_address}")
-        print(f"  Amount: {amount_ton} TON ({amount_nano} nano)")
-        print(f"  Comment: {comment}")
+        # Convert TON to nano
+        amount_nano = int(amount_ton * 1_000_000_000)
         
-        # Tạo transaction payload cho sendMessage
-        payload = {
+        # Prepare transaction data
+        transaction_data = {
             "from": TON_WALLET_ADDRESS,
             "to": to_address,
-            "amount": str(amount_nano),  # Convert to string
-            "message": comment,
+            "amount": str(amount_nano),
+            "comment": comment,
             "private_key": TON_PRIVATE_KEY
         }
         
-        # Gửi request đến Toncenter API (mainnet)
-        response = requests.post(
-            f"{TONCENTER_API}/sendMessage",
-            json=payload,
-            headers={'Content-Type': 'application/json'},
-            timeout=30
-        )
-        
-        print(f"Toncenter API response status: {response.status_code}")
-        print(f"Toncenter API response: {response.text}")
+        # Send transaction
+        response = requests.post(TONCENTER_API, json=transaction_data)
         
         if response.status_code == 200:
-            result = response.json()
-            if result.get('ok'):
-                tx_hash = result.get('result', {}).get('hash', 'pending')
-                print(f"Transaction successful! Hash: {tx_hash}")
+            data = response.json()
+            if data.get('ok'):
+                tx_hash = data.get('result', {}).get('hash')
                 return {
-                    "tx_hash": tx_hash,
-                    "status": "success"
+                    'success': True,
+                    'hash': tx_hash,
+                    'message': 'Transaction sent successfully'
                 }
             else:
-                error_msg = result.get('error', 'Unknown error')
-                print(f"Toncenter API error: {error_msg}")
-                return {"error": error_msg, "tx_hash": None}
+                error_msg = data.get('error', 'Unknown error')
+                return {
+                    'success': False,
+                    'error': f'Toncenter API error: {error_msg}'
+                }
         else:
-            error_msg = f"HTTP {response.status_code}: {response.text}"
-            print(f"HTTP error: {error_msg}")
-            return {"error": error_msg, "tx_hash": None}
+            error_msg = f'HTTP {response.status_code}'
+            return {
+                'success': False,
+                'error': f'HTTP error: {error_msg}'
+            }
             
     except Exception as e:
-        print(f"Error in send_ton_onchain: {e}")
-        return {"error": str(e), "tx_hash": None} 
+        return {
+            'success': False,
+            'error': f'Error in send_ton_onchain: {str(e)}'
+        } 
