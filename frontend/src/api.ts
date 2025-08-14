@@ -85,7 +85,9 @@ export async function withdraw(address: string, amount: number) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ address, amount }),
   });
-  return await res.json();
+  
+  // Return the response object so frontend can check res.ok
+  return res;
 }
 
 export async function openChest(address: string, chestType: string) {

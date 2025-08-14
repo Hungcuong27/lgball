@@ -7,8 +7,9 @@ import TonWeb from 'tonweb';
 
 import { checkTonTransactionConfirmed } from './utils';
 import BallInfoModal from './components/BallInfoModal';
+import WhitepaperButton from './components/WhitepaperButton';
 import { BALLS } from './balls';
-import { registerUser, getUser, getReferrals, getReferralCommissions, getOpenHistory, getTransactions, deposit, withdraw, openChest, getCollection, getHistory } from './api';
+import { registerUser, getUser, getReferrals, getReferralCommissions, getOpenHistory, getTransactions, deposit, withdraw, openChest, getCollection, getHistory, checkin, claimDailyTon, getCheckinHistory, getDailyTonHistory } from './api';
 import { useResponsive, getResponsiveStyles } from './hooks/useResponsive';
 import TelegramWebApp from './telegram';
 
@@ -42,6 +43,8 @@ import koundeImg from './assets/kounde.png';
 import arnoldImg from './assets/arnold.png';
 import hakimiImg from './assets/hakimi.png';
 import diasImg from './assets/dias.png';
+// PVP/Rank coming soon image
+import pvpImg from './assets/pvp.png';
 
 const BALL_IMAGES: Record<string, string> = {
   bronzeBall: bronzeBallImg,
@@ -79,7 +82,7 @@ const PLAYER_IMAGES: Record<string, string> = {
 };
 
 const LANGUAGES = {
-  en: {
+    en: {
     home: 'Home',
     referral: 'Referral',
     history: 'History',
@@ -142,6 +145,24 @@ const LANGUAGES = {
     connected_wallet: 'Connected Wallet',
     no_wallet_connected: 'No wallet connected',
     app_title: 'Legendary Ball',
+      check_in: 'Check In',
+      pvp_rank: 'PVP / Rank',
+      ball_checkin_title: 'Ball Check-in - Resets weekly',
+      ton_checkin_title: 'TON Check-in',
+      pvp_use_ball_hint: 'Use Ball to join PVP',
+      ball_checkin_history: 'Ball Check-in History',
+      ton_daily_claim_history: 'TON Daily Claim History',
+      no_data: 'No data',
+      day: 'Day',
+      ball_unit: 'Ball',
+      claimed_label: 'Claimed',
+      claim_action: 'Claim',
+      total_ball_label: 'Total Ball',
+      connect_wallet_prompt: 'Please connect wallet',
+      already_claimed_today: 'Already claimed today',
+      error_try_again: 'An error occurred, please try again later',
+      received_prefix: '+',
+      claim_ton_daily: 'Claim TON Daily',
   },
   ko: {
     home: '홈',
@@ -206,6 +227,24 @@ const LANGUAGES = {
     app_title: '전설의 공',
     failed: '실패',
     pending: '대기 중',
+      check_in: '체크인',
+      pvp_rank: 'PVP / 랭크',
+      ball_checkin_title: 'Ball 체크인 - 매주 초기화',
+      ton_checkin_title: 'TON 체크인',
+      pvp_use_ball_hint: 'PVP에 참여하려면 Ball을 사용하세요',
+      ball_checkin_history: 'Ball 체크인 히스토리',
+      ton_daily_claim_history: 'TON 일일 수령 히스토리',
+      no_data: '기록 없음',
+      day: '일',
+      ball_unit: 'Ball',
+      claimed_label: '수령됨',
+      claim_action: '수령',
+      total_ball_label: '총 Ball',
+      connect_wallet_prompt: '지갑을 연결해 주세요',
+      already_claimed_today: '오늘은 이미 수령했습니다',
+      error_try_again: '오류가 발생했습니다. 잠시 후 다시 시도해 주세요',
+      received_prefix: '+',
+      claim_ton_daily: '오늘의 TON 수령',
   }
 };
 
@@ -228,6 +267,15 @@ function App() {
   const [lang, setLang] = useState<'en' | 'ko'>('en');
   const [langDropdown, setLangDropdown] = useState(false);
   const langRef = useRef<HTMLDivElement>(null);
+  // Bottom banner tab state
+  const [bottomTab, setBottomTab] = useState<'checkin' | 'pvp'>('checkin');
+  // Weekly Check-In state
+  const [checkinClaimed, setCheckinClaimed] = useState<boolean[]>(new Array(7).fill(false));
+  const [weekStartISO, setWeekStartISO] = useState<string>('');
+  const [checkinMessage, setCheckinMessage] = useState<string>('');
+  const [tonClaimMessage, setTonClaimMessage] = useState<string>('');
+  const CHECKIN_LOCALSTORAGE_KEY = 'legendball.checkin.state.v1';
+  const CHECKIN_REWARDS: number[] = [10, 15, 20, 30, 40, 60, 100]; // Ball tăng dần trong tuần
   
   // Thêm state cho animation mở bóng
   const [openingBall, setOpeningBall] = useState<string | null>(null);
@@ -248,6 +296,94 @@ function App() {
   const [referralLink, setReferralLink] = useState<string>('');
   const [copySuccess, setCopySuccess] = useState<boolean>(false);
   const [formattedAddress, setFormattedAddress] = useState<string>('');
+  const [totalBall, setTotalBall] = useState<number>(0);
+  const [serverCheckinDay, setServerCheckinDay] = useState<number>(0);
+  const [serverLastCheckinDate, setServerLastCheckinDate] = useState<string>('');
+  const [dailyTonClaimedToday, setDailyTonClaimedToday] = useState<boolean>(false);
+  const [checkinHistory, setCheckinHistory] = useState<any[]>([]);
+  const [dailyTonHistory, setDailyTonHistory] = useState<any[]>([]);
+  const [userTonDaily, setUserTonDaily] = useState<number>(0);
+  const [backendCheckinClaimedToday, setBackendCheckinClaimedToday] = useState<boolean>(false);
+  const [backendTonClaimedToday, setBackendTonClaimedToday] = useState<boolean>(false);
+  const [isCheckinOpen, setIsCheckinOpen] = useState<boolean>(false);
+  const [isPvpOpen, setIsPvpOpen] = useState<boolean>(false);
+  const getTodayISO = () => {
+    const now = new Date();
+    return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
+  };
+
+  const buildClaimedFromServer = (day: number, lastDate?: string) => {
+    const today = getTodayISO();
+    const claimed: boolean[] = new Array(7).fill(false);
+    
+    // Nếu không có thông tin từ server, trả về mảng rỗng
+    if (!day || day < 1) {
+      return claimed;
+    }
+    
+    // Kiểm tra xem last_checkin_date có phải là hôm nay không
+    const isLastCheckinToday = lastDate === today;
+    
+    // Nếu last_checkin_date không phải hôm nay, reset về ngày 1
+    if (!isLastCheckinToday) {
+      // Chỉ đánh dấu các ngày đã claim trước đó (nếu có)
+      const claimedDays = Math.min(day, 7);
+      for (let i = 0; i < claimedDays; i++) {
+        claimed[i] = true;
+      }
+    } else {
+      // Nếu đã checkin hôm nay, đánh dấu tất cả ngày từ 1 đến day
+      const claimedDays = Math.min(day, 7);
+      for (let i = 0; i < claimedDays; i++) {
+        claimed[i] = true;
+      }
+    }
+    
+    return claimed;
+  };
+
+  // Helpers for weekly check-in
+  const getMondayISO = (date: Date): string => {
+    const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+    const day = d.getUTCDay(); // 0 (Sun) - 6 (Sat)
+    const diff = (day === 0 ? -6 : 1) - day; // shift to Monday
+    d.setUTCDate(d.getUTCDate() + diff);
+    return d.toISOString().slice(0, 10); // YYYY-MM-DD
+  };
+
+  const getTodayIndex = (): number => {
+    const now = new Date();
+    const monday = new Date(getMondayISO(now));
+    const diffMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - Date.UTC(monday.getUTCFullYear(), monday.getUTCMonth(), monday.getUTCDate());
+    return Math.min(6, Math.max(0, Math.floor(diffMs / (24 * 60 * 60 * 1000))));
+  };
+
+  const loadCheckinState = () => {
+    try {
+      const raw = localStorage.getItem(CHECKIN_LOCALSTORAGE_KEY);
+      const currentWeek = getMondayISO(new Date());
+      if (!raw) {
+        setWeekStartISO(currentWeek);
+        setCheckinClaimed(new Array(7).fill(false));
+        return;
+      }
+      const parsed = JSON.parse(raw) as { weekStartISO: string; claimed: boolean[] };
+      if (!parsed || parsed.weekStartISO !== currentWeek || !Array.isArray(parsed.claimed) || parsed.claimed.length !== 7) {
+        setWeekStartISO(currentWeek);
+        setCheckinClaimed(new Array(7).fill(false));
+        return;
+      }
+      setWeekStartISO(parsed.weekStartISO);
+      setCheckinClaimed(parsed.claimed);
+    } catch (e) {
+      setWeekStartISO(getMondayISO(new Date()));
+      setCheckinClaimed(new Array(7).fill(false));
+    }
+  };
+
+  const saveCheckinState = (weekISO: string, claimed: boolean[]) => {
+    localStorage.setItem(CHECKIN_LOCALSTORAGE_KEY, JSON.stringify({ weekStartISO: weekISO, claimed }));
+  };
 
   // Function để chuyển đổi địa chỉ ví sang dạng user-friendly (đầy đủ)
   const getFullUserFriendlyAddress = async (address: string) => {
@@ -264,8 +400,25 @@ function App() {
       }
       return address;
     } catch (error) {
-      console.error('Error formatting wallet address:', error);
+      // Error formatting wallet address
       return address;
+    }
+  };
+
+  // Format timestamp (seconds) to UTC string: YYYY-MM-DD HH:mm:ss UTC
+  const formatUtc = (timestampSeconds: number) => {
+    try {
+      const d = new Date((Number(timestampSeconds) || 0) * 1000);
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const y = d.getUTCFullYear();
+      const m = pad(d.getUTCMonth() + 1);
+      const day = pad(d.getUTCDate());
+      const hh = pad(d.getUTCHours());
+      const mm = pad(d.getUTCMinutes());
+      const ss = pad(d.getUTCSeconds());
+      return `${y}-${m}-${day} ${hh}:${mm}:${ss}`;
+    } catch {
+      return '';
     }
   };
 
@@ -276,7 +429,7 @@ function App() {
       setCopySuccess(true);
       setTimeout(() => setCopySuccess(false), 2000); // Reset sau 2 giây
     } catch (err) {
-      console.error('Failed to copy:', err);
+      // Failed to copy
       // Fallback cho browser cũ
       const textArea = document.createElement('textarea');
       textArea.value = referralLink;
@@ -331,7 +484,7 @@ function App() {
           setReferrals(Array.isArray(data.referrals) ? data.referrals : []);
         })
         .catch(err => {
-          console.error('Error fetching referrals:', err);
+          // Error fetching referrals
           // Fallback nếu API fail
           setReferralLink('https://t.me/LegendballBot/legendball?startapp=admin');
           setReferrals([]);
@@ -349,10 +502,92 @@ function App() {
       // Format để hiển thị (rút gọn)
       const displayAddress = formatWalletAddress(wallet.account.address);
       setFormattedAddress(displayAddress);
+      // Cập nhật tổng Ball nếu backend có
+      getUser(wallet.account.address).then(u => {
+        if (u && u.collection && typeof u.collection.ball === 'number') setTotalBall(u.collection.ball);
+        if (u && u.collection && typeof u.collection.checkin_day === 'number') {
+          setServerCheckinDay(u.collection.checkin_day);
+          setServerLastCheckinDate(u.collection.last_checkin_date || '');
+          // Đồng bộ trạng thái claimed theo server
+          const newClaimed = buildClaimedFromServer(u.collection.checkin_day, u.collection.last_checkin_date);
+          setCheckinClaimed(newClaimed);
+          saveCheckinState(weekStartISO || getMondayISO(new Date()), newClaimed);
+        }
+        // Lấy ton_daily của user
+        if (u && typeof u.ton_daily === 'number') {
+          setUserTonDaily(u.ton_daily);
+        }
+        // history
+        if (wallet.account?.address) {
+          getCheckinHistory(wallet.account.address).then(data => {
+            if (data && data.history) {
+              setCheckinHistory(data.history);
+              setBackendCheckinClaimedToday(data.checkin_claimed_today || false);
+            }
+          }).catch(() => setCheckinHistory([]));
+          getDailyTonHistory(wallet.account.address).then(data => {
+            if (data && data.history) {
+              setDailyTonHistory(data.history);
+              setBackendTonClaimedToday(data.ton_claimed_today || false);
+            }
+          }).catch(() => setDailyTonHistory([]));
+        }
+      }).catch(() => {});
     } else {
       setFormattedAddress('');
+      setTotalBall(0);
+      setServerCheckinDay(0);
+      setServerLastCheckinDate('');
+      setDailyTonClaimedToday(false);
+      setCheckinHistory([]);
+      setDailyTonHistory([]);
+      setUserTonDaily(0);
+      setBackendCheckinClaimedToday(false);
+      setBackendTonClaimedToday(false);
     }
   }, [wallet]);
+
+  // Initialize weekly check-in on load or when switching back to home
+  useEffect(() => {
+    if (nav === 'home') {
+      loadCheckinState();
+    }
+  }, [nav]);
+
+  const handleClaimToday = async () => {
+    if (!wallet || !wallet.account?.address) {
+      setCheckinMessage(t.connect_wallet_prompt);
+      setTimeout(() => setCheckinMessage(''), 2000);
+      return;
+    }
+    // Gọi backend để xác nhận claim, không chặn bởi local state để tránh lệch trạng thái
+    try {
+      const res = await checkin(wallet.account.address);
+      if (res && res.ok) {
+        // Update local UI state to reflect server
+        const updated = buildClaimedFromServer(res.checkin_day || 1, res.last_checkin_date);
+        setCheckinClaimed(updated);
+        saveCheckinState(weekStartISO || getMondayISO(new Date()), updated);
+        setTotalBall(res.total_ball ?? totalBall + (res.ball_added || 0));
+        setServerCheckinDay(res.checkin_day || 1);
+        setServerLastCheckinDate(res.last_checkin_date || '');
+        setCheckinMessage(`${t.received_prefix}${res.ball_added || 0} ${t.ball_unit}`);
+        setTimeout(() => setCheckinMessage(''), 2500);
+        
+        // Reload checkin history và daily TON history
+        if (wallet.account?.address) {
+          getCheckinHistory(wallet.account.address).then(setCheckinHistory).catch(() => setCheckinHistory([]));
+          getDailyTonHistory(wallet.account.address).then(setDailyTonHistory).catch(() => {});
+        }
+      } else {
+        setCheckinMessage(res?.message || t.already_claimed_today);
+        setTimeout(() => setCheckinMessage(''), 2000);
+      }
+    } catch (e) {
+      setCheckinMessage(t.error_try_again);
+      setTimeout(() => setCheckinMessage(''), 2000);
+    }
+  };
 
   // Thay vì dùng RECEIVER_WALLET, dùng biến receiver mới
   // const receiver = "0:75e23fc820f0a8b09044cc42de4358136041b69fbb9384058422f2461a0e2b92";
@@ -401,18 +636,28 @@ function App() {
           chest_type: ballKey, // truyền trực tiếp ballKey
         }),
       });
-      const data = await res.json();
       
-      if (data.error) {
-        setError(data.error);
+      if (res.ok) {
+        const data = await res.json();
+        setResult(data);
+        setShowResult(true);
+        
+        // Cập nhật ton_daily của user
+        if (data.new_ton_daily !== undefined) {
+          setUserInfo((prev: any) => prev ? { ...prev, ton_daily: data.new_ton_daily } : prev);
+        }
+        
+        // Refresh user info
+        if (wallet.account?.address) {
+          getUser(wallet.account.address).then(setUserInfo).catch(() => {});
+        }
+        
+        setOpeningBall(null);
+        setBallAnimation(false);
+      } else {
+        setError(res.statusText || 'Có lỗi xảy ra khi mở bóng!');
         // Nếu lỗi, hoàn lại balance
         setUserInfo((prev: any) => ({ ...prev, balance: (prev.balance + ball.price) }));
-      } else {
-        setResult(data);
-        // Hiển thị kết quả sau khi animation hoàn thành
-        setShowResult(true);
-        // Cập nhật lại balance thực tế
-        getUser(wallet?.account.address || '').then(setUserInfo);
       }
     } catch (e: any) {
       setError(e.message || 'Có lỗi xảy ra!');
@@ -506,7 +751,7 @@ function App() {
       });
       
       // 2. Lấy tx_hash từ kết quả trả về
-      let tx_hash = tx?.boc || tx?.hash || `tx_${Date.now()}`;
+      let tx_hash = (tx as any)?.boc || (tx as any)?.hash || `tx_${Date.now()}`;
       
       
       // 3. Gọi API deposit để cộng balance (bỏ qua xác thực blockchain)
@@ -541,23 +786,30 @@ function App() {
       }
       
       // Tạo bản ghi withdraw với status pending
-      const res = await withdraw(wallet.account.address, parseFloat(withdrawAmount));
+      const res = await withdraw(wallet.account!.address, parseFloat(withdrawAmount));
       
-      if (res.status === 'success') {
-        setWalletMsg(t.withdraw_request_sent);
-        setWithdrawAmount(''); // Clear input
-        getUser(wallet.account.address).then(setUserInfo);
+      if (res && res.ok) {
+        const data = await res.json();
+        setWalletMsg('Withdraw successful!');
+        setWithdrawAmount('');
         
-        // Refresh transactions list
-        if (nav === 'wallet') {
-          getTransactions(wallet.account.address).then(setTransactions);
+        // Cập nhật balance và lịch sử ngay lập tức
+        setUserInfo((prev: any) => prev ? { ...prev, balance: (prev.balance - parseFloat(withdrawAmount)) } : prev);
+        
+        // Refresh transaction history
+        if (wallet.account?.address) {
+          getTransactions(wallet.account.address).then(setTransactions).catch(() => {});
         }
+        
+        setTimeout(() => setWalletMsg(''), 5000);
       } else {
-        setWalletMsg(t.withdraw_failed + ': ' + (res.error || t.unknown_reason));
+        setWalletMsg(`${t.withdraw_failed}${res?.error || 'Unknown error'}`);
+        setTimeout(() => setWalletMsg(''), 5000);
       }
     } catch (e: any) {
-      console.error('Withdraw error:', e);
-      setWalletMsg(t.withdraw_failed);
+      // Withdraw error
+      setWalletMsg(`${t.withdraw_failed}${e?.message || 'Unknown error'}`);
+      setTimeout(() => setWalletMsg(''), 5000);
     }
   }
 
@@ -644,6 +896,14 @@ function App() {
             scrollbar-width: none;
           }
           
+          /* Whitepaper button in navigation */
+          .nav-whitepaper-btn {
+            margin-left: 12px;
+            margin-right: 12px;
+            white-space: nowrap;
+            flex-shrink: 0;
+          }
+          
           /* Responsive design for ball cards */
           @media (max-width: 1200px) {
             .ball-cards-container {
@@ -723,6 +983,16 @@ function App() {
             </button>
           ))}
         </div>
+        
+        {/* Whitepaper Button */}
+        <WhitepaperButton 
+          variant="outline" 
+          size="small"
+          className="nav-whitepaper-btn"
+        >
+          📄 Whitepaper
+        </WhitepaperButton>
+        
         {!responsive.isMobile && <TonConnectButton />}
 
         {wallet && (
@@ -979,7 +1249,9 @@ function App() {
                   background: 'linear-gradient(90deg, #4CAF50 0%, #45a049 100%)' 
                 }}></div>
                 <div style={{ fontSize: 16, color: '#aaa', marginBottom: 8 }}>{t.daily_reward}</div>
-                <div style={{ fontSize: 32, color: '#4CAF50', fontWeight: 'bold' }}>{(userInfo?.ton_daily || 0).toFixed(4)} TON</div>
+                <div style={{ fontSize: 32, color: '#4CAF50', fontWeight: 'bold' }}>
+                  {(userInfo?.ton_daily || 0).toFixed(4)} TON
+                </div>
               </div>
               <div className={responsive.isMobile ? 'force-horizontal-stats-card' : ''} style={{ 
                 background: 'linear-gradient(135deg, #23284a 0%, #181c2b 100%)', 
@@ -1014,6 +1286,8 @@ function App() {
                 <div style={{ fontSize: 32, color: '#2196F3', fontWeight: 'bold' }}>{(userInfo?.ton_withdrawn || 0).toFixed(4)} TON</div>
               </div>
             </div>
+            
+
             <div className={`ball-cards-container ${responsive.isMobile ? 'force-horizontal-balls' : ''}`} style={{ 
               display: 'flex', 
               gap: styles.ballCard.gap, 
@@ -1271,6 +1545,293 @@ function App() {
                 </div>
               </div>
             )}
+            {/* Bottom Banner: Check-In and PVP/Rank */}
+            <div style={{
+              marginTop: 36,
+              background: 'linear-gradient(135deg, #23284a 0%, #181c2b 100%)',
+              borderRadius: 16,
+              border: '1px solid #444',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.3)'
+            }}>
+              {/* Tabs */}
+              <div style={{ display: 'flex', gap: 8, padding: 12, borderBottom: '1px solid #333' }}>
+                <button
+                  onClick={() => {
+                    setBottomTab('checkin');
+                    setIsCheckinOpen(!isCheckinOpen);
+                    setIsPvpOpen(false);
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '10px 12px',
+                    borderRadius: 10,
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontWeight: 'bold',
+                    color: (bottomTab === 'checkin' && isCheckinOpen) ? '#23284a' : '#fff',
+                    background: (bottomTab === 'checkin' && isCheckinOpen) ? 'linear-gradient(135deg, #ffb300 0%, #ff8c00 100%)' : 'transparent',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  {t.check_in}
+                </button>
+                <button
+                  onClick={() => {
+                    setBottomTab('pvp');
+                    setIsPvpOpen(!isPvpOpen);
+                    setIsCheckinOpen(false);
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '10px 12px',
+                    borderRadius: 10,
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontWeight: 'bold',
+                    color: (bottomTab === 'pvp' && isPvpOpen) ? '#23284a' : '#fff',
+                    background: (bottomTab === 'pvp' && isPvpOpen) ? 'linear-gradient(135deg, #ffb300 0%, #ff8c00 100%)' : 'transparent',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  {t.pvp_rank}
+                </button>
+              </div>
+              {/* Content */}
+              <div style={{ 
+                padding: 16,
+                maxHeight: (isCheckinOpen || isPvpOpen) ? '70vh' : '0',
+                overflow: 'hidden',
+                transition: 'max-height 0.3s ease'
+              }}>
+                {bottomTab === 'checkin' && isCheckinOpen && (
+                  <div>
+                    {/* Header với nút đóng */}
+                    <div style={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'center', 
+                      marginBottom: 16 
+                    }}>
+                      <h3 style={{ color: '#ffb300', margin: 0 }}>{t.check_in}</h3>
+                      <button
+                        onClick={() => setIsCheckinOpen(false)}
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: 8,
+                          border: 'none',
+                          background: '#ff4d4f',
+                          color: '#fff',
+                          cursor: 'pointer',
+                          fontSize: 12,
+                          fontWeight: 'bold'
+                        }}
+                      >
+                        ✕ Close
+                      </button>
+                    </div>
+                    
+                    {/* TON Check-in row with Claim button */}
+                    <div style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      background: 'linear-gradient(135deg, #1b2a38 0%, #161c29 100%)',
+                      padding: '12px 14px', border: '1px solid #2a3346', borderRadius: 12, marginBottom: 12
+                    }}>
+                      <div style={{ color: '#4CAF50', fontWeight: 'bold', fontSize: 16 }}>{t.ton_checkin_title || 'TON Check-in'}</div>
+                      {wallet && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await claimDailyTon(wallet.account!.address);
+                              if (res && res.ok) {
+                                setTonClaimMessage(`${t.received_prefix}${(res.ton_added || 0).toFixed ? (res.ton_added).toFixed(2) : res.ton_added} TON`);
+                                setUserInfo((prev: any) => prev ? { ...prev, balance: (prev.balance || 0) + (res.ton_added || 0) } : prev);
+                                setDailyTonClaimedToday(true);
+                                if (wallet.account?.address) {
+                                  getDailyTonHistory(wallet.account.address).then(setDailyTonHistory).catch(() => {});
+                                }
+                                setTimeout(() => setTonClaimMessage(''), 2500);
+                              } else {
+                                setDailyTonClaimedToday(true);
+                                setTonClaimMessage(res?.message || t.already_claimed_today);
+                                setTimeout(() => setTonClaimMessage(''), 2000);
+                              }
+                            } catch (e) {
+                              setTonClaimMessage(t.error_try_again);
+                              setTimeout(() => setTonClaimMessage(''), 2000);
+                            }
+                          }}
+                          style={{
+                            padding: '10px 16px',
+                            borderRadius: 10,
+                            border: 'none',
+                            background: dailyTonClaimedToday ? '#1b2d1b' : 'linear-gradient(135deg, #00d084 0%, #00a37a 100%)',
+                            color: dailyTonClaimedToday ? '#4CAF50' : '#0e1a1f',
+                            fontWeight: 'bold',
+                            cursor: 'pointer',
+                            fontSize: 16,
+                            boxShadow: '0 6px 16px rgba(0, 208, 132, 0.3)'
+                          }}
+                        >
+                          {dailyTonClaimedToday ? t.claimed_label : t.claim_ton_daily}
+                        </button>
+                      )}
+                    </div>
+                    {tonClaimMessage && (
+                      <div style={{ marginTop: 6, color: '#4CAF50', fontWeight: 'bold', textAlign: 'right' }}>{tonClaimMessage}</div>
+                    )}
+                    {/* Ball Check-in list */}
+                    <div style={{ marginBottom: 8, color: '#ffb300', fontWeight: 'bold' }}>{t.ball_checkin_title || t.checkin_title}</div>
+                    <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 4 }}>
+                      <div style={{ display: 'flex', gap: 10, minWidth: 7 * 92 }}>
+                      {CHECKIN_REWARDS.map((reward, idx) => {
+                        const currentDay = serverCheckinDay && serverCheckinDay >= 1 ? serverCheckinDay : 1;
+                        const claimed = checkinClaimed[idx];
+                        
+                        // Kiểm tra xem có phải ngày hiện tại có thể claim không
+                        const isCurrentUnclaimed = (idx + 1 === currentDay) && !backendCheckinClaimedToday;
+                        
+                        // Kiểm tra xem có phải ngày đầu tuần mới không
+                        const isNewWeekStart = (idx === 0) && (currentDay === 1 || !serverLastCheckinDate || serverLastCheckinDate !== getTodayISO());
+                        
+                        // Kiểm tra xem có thể claim ngày này không
+                        const canClaim = !backendCheckinClaimedToday && (isCurrentUnclaimed || isNewWeekStart);
+                        
+                        return (
+                          <div key={idx} style={{
+                            background: claimed ? (idx + 1 === currentDay ? '#1b2d1b' : '#15291a') : 
+                                     canClaim ? '#2b234a' : '#181c2b',
+                            border: claimed ? '1px solid #4CAF50' : 
+                                     canClaim ? '1px solid #ffb300' : '1px solid #444',
+                            borderRadius: 10,
+                            padding: 8,
+                            textAlign: 'center',
+                            color: claimed ? '#4CAF50' : 
+                                   canClaim ? '#ffb300' : '#fff',
+                            minWidth: 92
+                          }}>
+                            <div style={{ fontSize: 11, color: '#aaa' }}>{t.day} {idx + 1}</div>
+                            <div style={{ fontSize: 14, fontWeight: 'bold' }}>{reward} {t.ball_unit}</div>
+                            {claimed && (
+                              <div style={{ fontSize: 11, color: '#4CAF50' }}>{t.claimed_label}</div>
+                            )}
+                            {canClaim && (
+                              <button
+                                onClick={handleClaimToday}
+                                style={{
+                                  marginTop: 6,
+                                  padding: '6px 10px',
+                                  borderRadius: 8,
+                                  border: 'none',
+                                  background: 'linear-gradient(135deg, #ffb300 0%, #ff8c00 100%)',
+                                  color: '#23284a',
+                                  fontWeight: 'bold',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                {t.claim_action}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                      </div>
+                    </div>
+                    
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <div style={{ color: '#aaa' }}>{t.total_ball_label}: </div>
+                      <div style={{ color: '#ffb300', fontWeight: 'bold' }}>{totalBall}</div>
+                    </div>
+                    {checkinMessage && (
+                      <div style={{ marginTop: 12, color: '#4CAF50', fontWeight: 'bold', textAlign: 'center' }}>{checkinMessage}</div>
+                    )}
+
+                    {/* Histories */}
+                    {wallet && (
+                      <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
+                        <div style={{ background: '#181c2b', border: '1px solid #333', borderRadius: 12, padding: 12 }}>
+                          <div style={{ fontWeight: 'bold', marginBottom: 8, color: '#ffb300' }}>{t.ball_checkin_history || 'Ball Check-in History'}</div>
+                          {Array.isArray(checkinHistory) && checkinHistory.length > 0 ? (
+                            <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {checkinHistory.slice(0, 10).map((h, idx) => (
+                                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#ddd', alignItems: 'center', padding: '4px 0' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <span style={{ color: '#ffb300', fontWeight: 'bold' }}>+{h.ball_added || 0} Ball</span>
+                                  </div>
+                                  <span style={{ color: '#888', fontSize: 11 }}>{formatUtc(h.timestamp)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div style={{ color: '#888', fontSize: 12 }}>{t.no_data || 'No data'}</div>
+                          )}
+                        </div>
+
+                        <div style={{ background: '#181c2b', border: '1px solid #333', borderRadius: 12, padding: 12 }}>
+                          <div style={{ fontWeight: 'bold', marginBottom: 8, color: '#4CAF50' }}>{t.ton_daily_claim_history || 'TON Daily Claim History'}</div>
+                          {Array.isArray(dailyTonHistory) && dailyTonHistory.length > 0 ? (
+                            <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {dailyTonHistory
+                                .filter(h => h.type !== 'checkin') // Chỉ hiển thị TON, không hiển thị ball
+                                .slice(0, 10)
+                                .map((h, idx) => (
+                                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#ddd', padding: '4px 0' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <span style={{ color: '#4CAF50', fontWeight: 'bold' }}>+{h.ton_added || 0}</span>
+                                    <span style={{ color: '#4CAF50', fontSize: 10 }}>TON</span>
+                                  </div>
+                                  <span style={{ color: '#888', fontSize: 11 }}>{formatUtc(h.timestamp)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div style={{ color: '#888', fontSize: 12 }}>{t.no_data || 'No data'}</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {bottomTab === 'pvp' && isPvpOpen && (
+                  <div>
+                    {/* Header với nút đóng */}
+                    <div style={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'center', 
+                      marginBottom: 16 
+                    }}>
+                      <h3 style={{ color: '#ffb300', margin: 0 }}>{t.pvp_rank || 'PVP / Rank'}</h3>
+                      <button
+                        onClick={() => setIsPvpOpen(false)}
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: 8,
+                          border: 'none',
+                          background: '#ff4d4f',
+                          color: '#fff',
+                          cursor: 'pointer',
+                          fontSize: 12,
+                          fontWeight: 'bold'
+                        }}
+                      >
+                        ✕ Close
+                      </button>
+                    </div>
+                    
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
+                      <div style={{ borderRadius: 16, overflow: 'hidden', border: '1px solid #444', position: 'relative' }}>
+                        <img src={pvpImg} alt="PVP" style={{ width: '100%', maxWidth: 600, display: 'block' }} />
+                        <div style={{ position: 'absolute', bottom: 10, left: 10, right: 10, textAlign: 'center',
+                          background: 'rgba(0,0,0,0.45)', color: '#fff', padding: '8px 12px', borderRadius: 10,
+                          fontWeight: 'bold' }}>
+                          {t.pvp_use_ball_hint}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </>
         )}
         {nav === 'referral' && (
@@ -1360,7 +1921,13 @@ function App() {
                       wordBreak: 'break-all'
                     }}>
                       <div style={{ color: '#ffb300', fontWeight: 'bold' }}>
-                        {r?.friendly_address || r?.address || `User ${index + 1}`}
+                        {(() => {
+                          const addr = r?.friendly_address || r?.address || `User ${index + 1}`;
+                          if (typeof addr === 'string' && addr.length > 16) {
+                            return `${addr.slice(0, 8)}...${addr.slice(-8)}`;
+                          }
+                          return addr;
+                        })()}
                       </div>
                       {r?.joined_at && (
                         <div style={{ color: '#aaa', fontSize: 12, marginTop: 4 }}>
@@ -1382,7 +1949,7 @@ function App() {
             {Array.isArray(referralCommissions) && referralCommissions.length > 0 && (
               <div style={{ marginTop: 24 }}>
                 <h3 style={{ marginBottom: 12, color: '#ffb300' }}>{t.commission_history}</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {referralCommissions.slice(0, 10).map((c, index) => (
                     <div key={index} style={{ 
                       background: '#181c2b', 
@@ -1393,42 +1960,75 @@ function App() {
                       justifyContent: 'space-between',
                       alignItems: 'center'
                     }}>
-                                           <div>
-                       <div style={{ color: '#fff' }}>From: {c?.referred_friendly_address || c?.referred_address?.slice(0, 8)}...{c?.referred_address?.slice(-6)}</div>
-                       <div style={{ color: '#aaa', fontSize: 11 }}>
-                         {c?.chest_type && (
-                           <span style={{ color: '#ffb300' }}>
-                             {c.chest_type === 'bronzeBall' ? t.bronze_ball : 
-                              c.chest_type === 'silverBall' ? t.silver_ball : 
-                              c.chest_type === 'goldBall' ? t.gold_ball : 
-                              c.chest_type === 'diamondBall' ? t.diamond_ball : c.chest_type}
-                           </span>
-                         )} • {c?.timestamp ? new Date(c.timestamp * 1000).toLocaleString(lang === 'ko' ? 'ko-KR' : 'en-US') : 'N/A'}
-                       </div>
-                     </div>
-                     <div style={{ textAlign: 'right' }}>
-                         <div style={{ color: '#4CAF50', fontWeight: 'bold' }}>
-                           +{c?.commission_amount?.toFixed(4) || '0.0000'} TON
-                         </div>
-                         {c?.price && (
-                           <div style={{ color: '#aaa', fontSize: 10 }}>
-                             {t.ball_price} {c.price} TON
-                           </div>
-                         )}
-                       </div>
+                      <div>
+                        <div style={{ color: '#fff' }}>
+                          From: {c?.referred_address ? `${c.referred_address.slice(0, 8)}...${c.referred_address.slice(-8)}` : 'Unknown'}
+                        </div>
+                        <div style={{ color: '#aaa', fontSize: 11 }}>
+                          {c?.chest_type && (
+                            <span style={{ color: '#ffb300' }}>
+                              {c.chest_type === 'bronzeBall' ? t.bronze_ball : 
+                               c.chest_type === 'silverBall' ? t.silver_ball : 
+                               c.chest_type === 'goldBall' ? t.gold_ball : 
+                               c.chest_type === 'diamondBall' ? t.diamond_ball : c.chest_type}
+                            </span>
+                          )} • {c?.timestamp ? formatUtc(c.timestamp) : 'N/A'}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ color: '#4CAF50', fontWeight: 'bold' }}>
+                          +{c?.commission_amount?.toFixed(4) || '0.0000'} TON
+                        </div>
+                        {c?.price && (
+                          <div style={{ color: '#aaa', fontSize: 10 }}>
+                            {t.ball_price} {c.price} TON
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
               </div>
             )}
+            
+            {/* Whitepaper Section */}
+            <div style={{ 
+              marginTop: '32px',
+              padding: '24px',
+              background: 'linear-gradient(135deg, #181c2b 0%, #23284a 100%)',
+              borderRadius: '16px',
+              border: '1px solid #444',
+              textAlign: 'center'
+            }}>
+              <h3 style={{ 
+                color: '#ffb300', 
+                marginBottom: '16px', 
+                fontSize: '18px',
+                fontWeight: 'bold'
+              }}>
+                📚 Learn About Our Referral System
+              </h3>
+              <p style={{ 
+                color: '#aaa', 
+                marginBottom: '20px',
+                fontSize: '14px',
+                lineHeight: '1.5'
+              }}>
+                Discover how our referral system works, commission structure, 
+                and community benefits in our detailed whitepaper.
+              </p>
+              <WhitepaperButton variant="secondary" size="medium">
+                📖 Read Whitepaper
+              </WhitepaperButton>
+            </div>
           </div>
         )}
         {nav === 'history' && (
           <div style={{ maxWidth: 600, margin: '40px auto', background: '#23284a', borderRadius: 16, padding: 32 }}>
             <h2>{t.open_history}</h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-              {openHistory.slice(0, 20).map(h => {
-                // Tìm hình ảnh cầu thủ từ BALLS
+              {openHistory.map(h => {
+                // Tìm hình ảnh cầu thủ từ BALLS cho ball openings
                 let playerImg = null;
                 for (const ballKey in BALLS) {
                   const found = BALLS[ballKey]?.players?.find(p => p.name === h.player_card);
@@ -1437,6 +2037,7 @@ function App() {
                     break;
                   }
                 }
+                
                 return (
                   <div key={h.timestamp} style={{ display: 'flex', alignItems: 'center', background: '#181c2b', borderRadius: 12, padding: 16, gap: 18, boxShadow: '0 2px 8px #0003' }}>
                     {playerImg ? (
@@ -1448,8 +2049,10 @@ function App() {
                     )}
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 'bold', fontSize: 18, color: '#ffb300' }}>{h.player_card}</div>
-                      <div style={{ fontSize: 14, color: '#aaa' }}>{h.card_type} | {t.reward}: {h.reward?.toFixed(4)} TON</div>
-                      <div style={{ fontSize: 13, color: '#aaa' }}>{new Date(h.timestamp*1000).toLocaleString(lang === 'ko' ? 'ko-KR' : 'en-US')}</div>
+                      <div style={{ fontSize: 14, color: '#aaa' }}>
+                        {h.card_type} | {t.reward}: {h.ton_reward?.toFixed(4) || 0} TON
+                      </div>
+                      <div style={{ fontSize: 13, color: '#aaa' }}>{h.date || formatUtc(h.timestamp)}</div>
                     </div>
                   </div>
                 );
@@ -1486,7 +2089,7 @@ function App() {
                       fontWeight: 'bold',
                       wordBreak: 'break-all'
                     }}>
-                      {userInfo?.display_address ? formatWalletAddress(userInfo.display_address) : formattedAddress || wallet.account.address}
+                      {userInfo?.friendly_address ? formatWalletAddress(userInfo.friendly_address) : formattedAddress || wallet.account.address}
                     </div>
                   </div>
                   
@@ -1567,8 +2170,8 @@ function App() {
             </div>
             {walletMsg && <div style={{ margin: '18px 0', color: '#ffb300' }}>{walletMsg}</div>}
             <h3 style={{ marginTop: 32, marginBottom: 16 }}>{t.deposit_withdraw_history}</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {transactions.map(tn => (
+            <div style={{ maxHeight: '400px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {transactions.slice(0, 10).map(tn => (
                 <div 
                   key={tn.timestamp}
                   style={{
@@ -1590,7 +2193,7 @@ function App() {
                       {t[tn.type] || tn.type}
                     </div>
                     <div style={{ color: '#aaa', fontSize: 12 }}>
-                      {new Date(tn.timestamp*1000).toLocaleString(lang === 'ko' ? 'ko-KR' : 'en-US')}
+                      {formatUtc(tn.timestamp)}
                     </div>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
