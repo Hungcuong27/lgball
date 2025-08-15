@@ -9,7 +9,7 @@ import { checkTonTransactionConfirmed } from './utils';
 import BallInfoModal from './components/BallInfoModal';
 import WhitepaperButton from './components/WhitepaperButton';
 import { BALLS } from './balls';
-import { registerUser, getUser, getReferrals, getReferralCommissions, getOpenHistory, getTransactions, deposit, withdraw, openChest, getCollection, getHistory, checkin, claimDailyTon, getCheckinHistory, getDailyTonHistory } from './api';
+import { registerUser, getUser, getReferrals, getReferralCommissions, getOpenHistory, getTransactions, deposit, withdraw, openChest, getCollection, getHistory, checkin, claimDailyTon, getCheckinHistory, getDailyTonHistory, getCheckinStatus, getTonCheckinStatus } from './api';
 import { useResponsive, getResponsiveStyles } from './hooks/useResponsive';
 import TelegramWebApp from './telegram';
 
@@ -305,6 +305,26 @@ function App() {
   const [backendTonClaimedToday, setBackendTonClaimedToday] = useState<boolean>(false);
   const [isCheckinOpen, setIsCheckinOpen] = useState<boolean>(false);
   const [isPvpOpen, setIsPvpOpen] = useState<boolean>(false);
+  
+  // New state for improved checkin logic
+  const [currentCheckinDay, setCurrentCheckinDay] = useState<number>(1);
+  const [isConsecutive, setIsConsecutive] = useState<boolean>(true);
+  const [dailyStatus, setDailyStatus] = useState<any[]>([]);
+  
+  // New state for TON checkin status
+  const [tonCheckinStatus, setTonCheckinStatus] = useState<{
+    ton_claimed_today: boolean;
+    ton_amount: number;
+    can_claim_today: boolean;
+    user_ton_balance: number;
+    last_ton_claim_date: string | null;
+  }>({
+    ton_claimed_today: false,
+    ton_amount: 0,
+    can_claim_today: true,
+    user_ton_balance: 0,
+    last_ton_claim_date: null
+  });
   const getTodayISO = () => {
     const now = new Date();
     return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
@@ -506,10 +526,29 @@ function App() {
         if (u && u.collection && typeof u.collection.checkin_day === 'number') {
           setServerCheckinDay(u.collection.checkin_day);
           setServerLastCheckinDate(u.collection.last_checkin_date || '');
-          // Đồng bộ trạng thái claimed theo server
-          const newClaimed = buildClaimedFromServer(u.collection.checkin_day, u.collection.last_checkin_date);
-          setCheckinClaimed(newClaimed);
-          saveCheckinState(weekStartISO || getMondayISO(new Date()), newClaimed);
+                  // Đồng bộ trạng thái claimed theo server
+        const newClaimed = buildClaimedFromServer(u.collection.checkin_day, u.collection.last_checkin_date);
+        setCheckinClaimed(newClaimed);
+        saveCheckinState(weekStartISO || getMondayISO(new Date()), newClaimed);
+        
+        // Gọi API mới để lấy trạng thái checkin chính xác
+        getCheckinStatus(wallet.account.address).then(status => {
+          if (status && status.current_day) {
+            setCurrentCheckinDay(status.current_day);
+            setIsConsecutive(status.is_consecutive);
+            setDailyStatus(status.daily_status || []);
+          }
+        }).catch((error) => {
+          console.error('Failed to load checkin status:', error);
+        });
+        
+        // Gọi API mới để lấy trạng thái TON checkin
+        getTonCheckinStatus(wallet.account.address).then(tonStatus => {
+          setTonCheckinStatus(tonStatus);
+          setDailyTonClaimedToday(tonStatus.ton_claimed_today);
+        }).catch((error) => {
+          console.error('Failed to load TON checkin status:', error);
+        });
         }
         // Lấy ton_daily của user
         if (u && typeof u.ton_daily === 'number') {
@@ -542,6 +581,11 @@ function App() {
       setUserTonDaily(0);
       setBackendCheckinClaimedToday(false);
       setBackendTonClaimedToday(false);
+      
+      // Reset new checkin state
+      setCurrentCheckinDay(1);
+      setIsConsecutive(true);
+      setDailyStatus([]);
     }
   }, [wallet]);
 
@@ -572,10 +616,61 @@ function App() {
         setCheckinMessage(`${t.received_prefix}${res.ball_added || 0} ${t.ball_unit}`);
         setTimeout(() => setCheckinMessage(''), 2500);
         
+        // Tạm thời update daily_status để UI hiển thị ngay lập tức
+        if (res.checkin_day && dailyStatus.length > 0) {
+          const currentDayIndex = res.checkin_day - 1;
+          if (currentDayIndex >= 0 && currentDayIndex < dailyStatus.length) {
+            const updatedDailyStatus = [...dailyStatus];
+            updatedDailyStatus[currentDayIndex] = {
+              ...updatedDailyStatus[currentDayIndex],
+              claimed: true,
+              available: false
+            };
+            setDailyStatus(updatedDailyStatus);
+
+          }
+        }
+        
         // Reload checkin history và daily TON history
         if (wallet.account?.address) {
-          getCheckinHistory(wallet.account.address).then(setCheckinHistory).catch(() => setCheckinHistory([]));
-          getDailyTonHistory(wallet.account.address).then(setDailyTonHistory).catch(() => {});
+          // Reload checkin history
+          getCheckinHistory(wallet.account.address)
+            .then((historyData) => {
+              setCheckinHistory(historyData.history || []);
+              setBackendCheckinClaimedToday(historyData.checkin_claimed_today || false);
+            })
+            .catch((error) => {
+              console.error('Failed to reload checkin history:', error);
+              setCheckinHistory([]);
+            });
+          
+          // Reload daily TON history
+          getDailyTonHistory(wallet.account.address)
+            .then((tonHistoryData) => {
+              setDailyTonHistory(tonHistoryData.history || []);
+              setBackendTonClaimedToday(tonHistoryData.ton_claimed_today || false);
+            })
+            .catch((error) => {
+              console.error('Failed to reload daily TON history:', error);
+            });
+          
+          // Reload checkin status để update daily_status
+          getCheckinStatus(wallet.account.address)
+            .then((statusData) => {
+              if (statusData && statusData.current_day) {
+                setCurrentCheckinDay(statusData.current_day);
+                setIsConsecutive(statusData.is_consecutive);
+                setDailyStatus(statusData.daily_status || []);
+                
+                // Update claimed today status từ backend
+                if (statusData.claimed_today !== undefined) {
+                  setBackendCheckinClaimedToday(statusData.claimed_today);
+                }
+              }
+            })
+            .catch((error) => {
+              console.error('Failed to reload checkin status:', error);
+            });
         }
       } else {
         setCheckinMessage(res?.message || t.already_claimed_today);
@@ -1750,45 +1845,116 @@ function App() {
                     <div style={{
                       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                       background: 'linear-gradient(135deg, #1b2a38 0%, #161c29 100%)',
-                      padding: '12px 14px', border: '1px solid #2a3346', borderRadius: 12, marginBottom: 12
+                      padding: 'clamp(8px, 2.5vw, 12px) clamp(10px, 3vw, 14px)', 
+                      border: '1px solid #2a3346', 
+                      borderRadius: 'clamp(8px, 2.5vw, 12px)', 
+                      marginBottom: 12,
+                      gap: '8px'
                     }}>
-                      <div style={{ color: '#4CAF50', fontWeight: 'bold', fontSize: 16 }}>{t.ton_checkin_title || 'TON Check-in'}</div>
+                      <div style={{ 
+                        color: '#4CAF50', 
+                        fontWeight: 'bold', 
+                        fontSize: 'clamp(12px, 3.5vw, 16px)',
+                        flexShrink: 0
+                      }}>{t.ton_checkin_title || 'TON Check-in'}</div>
                       {wallet && (
                         <button
                           onClick={async () => {
+                            // Chỉ cho phép claim nếu chưa claim hôm nay
+                            if (!tonCheckinStatus.can_claim_today) {
+                              setTonClaimMessage(t.already_claimed_today);
+                              setTimeout(() => setTonClaimMessage(''), 2000);
+                              return;
+                            }
+                            
                             try {
                               const res = await claimDailyTon(wallet.account!.address);
-                              if (res && res.ok) {
+                              
+                              if (res && res.success) {
                                 setTonClaimMessage(`${t.received_prefix}${(res.ton_added || 0).toFixed ? (res.ton_added).toFixed(2) : res.ton_added} TON`);
                                 setUserInfo((prev: any) => prev ? { ...prev, balance: (prev.balance || 0) + (res.ton_added || 0) } : prev);
-                                setDailyTonClaimedToday(true);
+                                
+                                // Update TON checkin status immediately for instant UI feedback
+                                setTonCheckinStatus(prev => ({
+                                  ...prev,
+                                  ton_claimed_today: true,
+                                  can_claim_today: false
+                                }));
+                                
+                                // Add temporary TON record to history for instant UI feedback
+                                const tempTonRecord = {
+                                  type: 'daily_ton',
+                                  ton_added: res.ton_added || 0,
+                                  timestamp: Date.now() / 1000,
+                                  date: new Date().toLocaleString('en-US', {
+                                    year: 'numeric',
+                                    month: '2-digit',
+                                    day: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    second: '2-digit'
+                                  }).replace(',', '')
+                                };
+                                
+                                setDailyTonHistory(prev => [tempTonRecord, ...(prev || [])]);
+                                
+                                // Force immediate UI update
+                                setTimeout(() => {
+                                  setDailyTonHistory(current => [...current]);
+                                }, 100);
+                                
                                 if (wallet.account?.address) {
-                                  getDailyTonHistory(wallet.account.address).then(setDailyTonHistory).catch(() => {});
+                                  // Force reload TON history from backend
+                                  getDailyTonHistory(wallet.account.address).then(data => {
+                                    if (data && data.history) {
+                                      setDailyTonHistory(data.history);
+                                    }
+                                  }).catch(err => {
+                                    console.error('Error loading TON history:', err);
+                                  });
+                                  
+                                  // Reload TON checkin status
+                                  getTonCheckinStatus(wallet.account.address).then(newStatus => {
+                                    setTonCheckinStatus(newStatus);
+                                  }).catch(err => {
+                                    console.error('Error loading TON status:', err);
+                                  });
+                                  
+                                  // Also reload user info to get updated TON balance
+                                  getCollection(wallet.account.address).then(newUserInfo => {
+                                    setUserInfo(newUserInfo);
+                                  }).catch(err => {
+                                    console.error('Error loading user info:', err);
+                                  });
                                 }
+                                
                                 setTimeout(() => setTonClaimMessage(''), 2500);
                               } else {
-                                setDailyTonClaimedToday(true);
                                 setTonClaimMessage(res?.message || t.already_claimed_today);
                                 setTimeout(() => setTonClaimMessage(''), 2000);
                               }
                             } catch (e) {
+                              console.error('TON claim error:', e);
                               setTonClaimMessage(t.error_try_again);
                               setTimeout(() => setTonClaimMessage(''), 2000);
                             }
                           }}
                           style={{
-                            padding: '10px 16px',
-                            borderRadius: 10,
+                            padding: '8px 12px',
+                            borderRadius: 8,
                             border: 'none',
-                            background: dailyTonClaimedToday ? '#1b2d1b' : 'linear-gradient(135deg, #00d084 0%, #00a37a 100%)',
-                            color: dailyTonClaimedToday ? '#4CAF50' : '#0e1a1f',
+                            background: tonCheckinStatus.ton_claimed_today ? '#1b2d1b' : 'linear-gradient(135deg, #00d084 0%, #00a37a 100%)',
+                            color: tonCheckinStatus.ton_claimed_today ? '#4CAF50' : '#0e1a1f',
                             fontWeight: 'bold',
-                            cursor: 'pointer',
-                            fontSize: 16,
-                            boxShadow: '0 6px 16px rgba(0, 208, 132, 0.3)'
+                            cursor: tonCheckinStatus.can_claim_today ? 'pointer' : 'not-allowed',
+                            fontSize: 'clamp(12px, 3.5vw, 14px)',
+                            boxShadow: tonCheckinStatus.ton_claimed_today ? 'none' : '0 4px 12px rgba(0, 208, 132, 0.3)',
+                            opacity: tonCheckinStatus.can_claim_today ? 1 : 0.7,
+                            whiteSpace: 'nowrap',
+                            minWidth: 'fit-content'
                           }}
                         >
-                          {dailyTonClaimedToday ? t.claimed_label : t.claim_ton_daily}
+                          {tonCheckinStatus.ton_claimed_today ? t.claimed_label : t.claim_ton_daily}
                         </button>
                       )}
                     </div>
@@ -1800,17 +1966,21 @@ function App() {
                     <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 4 }}>
                       <div style={{ display: 'flex', gap: 10, minWidth: 7 * 92 }}>
                       {CHECKIN_REWARDS.map((reward, idx) => {
-                        const currentDay = serverCheckinDay && serverCheckinDay >= 1 ? serverCheckinDay : 1;
-                        const claimed = checkinClaimed[idx];
+                        // Sử dụng logic từ backend một cách nhất quán
+                        const currentDay = currentCheckinDay || 1;
+                        const dayNumber = idx + 1;
                         
-                        // Kiểm tra xem có phải ngày hiện tại có thể claim không
-                        const isCurrentUnclaimed = (idx + 1 === currentDay) && !backendCheckinClaimedToday;
+                        // Lấy trạng thái từ backend daily_status
+                        const dayStatus = dailyStatus[idx];
+                        const claimed = dayStatus?.claimed || false;
+                        const available = dayStatus?.available || false;
                         
-                        // Kiểm tra xem có phải ngày đầu tuần mới không
-                        const isNewWeekStart = (idx === 0) && (currentDay === 1 || !serverLastCheckinDate || serverLastCheckinDate !== getTodayISO());
+
                         
-                        // Kiểm tra xem có thể claim ngày này không
-                        const canClaim = !backendCheckinClaimedToday && (isCurrentUnclaimed || isNewWeekStart);
+                        // Có thể claim nếu:
+                        // 1. Ngày này available theo backend (đã được tính toán chính xác)
+                        // 2. Không cần kiểm tra backendCheckinClaimedToday nữa vì backend đã xử lý
+                        const canClaim = available;
                         
                         return (
                           <div key={idx} style={{
@@ -1884,20 +2054,23 @@ function App() {
 
                         <div style={{ background: '#181c2b', border: '1px solid #333', borderRadius: 12, padding: 12 }}>
                           <div style={{ fontWeight: 'bold', marginBottom: 8, color: '#4CAF50' }}>{t.ton_daily_claim_history || 'TON Daily Claim History'}</div>
+                          
+
+                          
                           {Array.isArray(dailyTonHistory) && dailyTonHistory.length > 0 ? (
                             <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
                               {dailyTonHistory
-                                .filter(h => h.type !== 'checkin') // Chỉ hiển thị TON, không hiển thị ball
+                                .filter(h => h.type === 'daily_ton') // Chỉ hiển thị TON records
                                 .slice(0, 10)
                                 .map((h, idx) => (
-                                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#ddd', padding: '4px 0' }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                    <span style={{ color: '#4CAF50', fontWeight: 'bold' }}>+{h.ton_added || 0}</span>
-                                    <span style={{ color: '#4CAF50', fontSize: 10 }}>TON</span>
+                                  <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#ddd', padding: '4px 0' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                      <span style={{ color: '#4CAF50', fontWeight: 'bold' }}>+{h.ton_added || 0}</span>
+                                      <span style={{ color: '#4CAF50', fontSize: 10 }}>TON</span>
+                                    </div>
+                                    <span style={{ color: '#888', fontSize: 11 }}>{formatUtc(h.timestamp)}</span>
                                   </div>
-                                  <span style={{ color: '#888', fontSize: 11 }}>{formatUtc(h.timestamp)}</span>
-                                </div>
-                              ))}
+                                ))}
                             </div>
                           ) : (
                             <div style={{ color: '#888', fontSize: 12 }}>{t.no_data || 'No data'}</div>

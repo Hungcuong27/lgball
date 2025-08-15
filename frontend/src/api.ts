@@ -128,11 +128,102 @@ export async function claimDailyTon(address: string) {
 }
 
 export async function getCheckinHistory(address: string) {
-  const res = await fetch(`${API_BASE}/checkin-history?address=${encodeURIComponent(address)}`);
+  try {
+    const res = await fetch(`${API_BASE}/checkin-history?address=${encodeURIComponent(address)}`);
+    if (!res.ok) {
+      console.error('Checkin history API error:', res.status, res.statusText);
+      return { history: [], checkin_claimed_today: false };
+    }
+    const data = await res.json();
+    
+    // Validate response format
+    if (data && typeof data === 'object') {
+      return {
+        history: Array.isArray(data.history) ? data.history : [],
+        checkin_claimed_today: Boolean(data.checkin_claimed_today)
+      };
+    }
+    
+    console.error('Invalid checkin history response format:', data);
+    return { history: [], checkin_claimed_today: false };
+  } catch (error) {
+    console.error('Error fetching checkin history:', error);
+    return { history: [], checkin_claimed_today: false };
+  }
+}
+
+export async function getCheckinStatus(address: string) {
+  const res = await fetch(`${API_BASE}/checkin-status?address=${encodeURIComponent(address)}`);
   return await res.json();
 }
 
 export async function getDailyTonHistory(address: string) {
-  const res = await fetch(`${API_BASE}/daily-ton-history?address=${encodeURIComponent(address)}`);
-  return await res.json();
+  try {
+    const res = await fetch(`${API_BASE}/daily-ton-history?address=${encodeURIComponent(address)}`);
+    if (!res.ok) {
+      console.error('Daily TON history API error:', res.status, res.statusText);
+      return { history: [], ton_claimed_today: false };
+    }
+    const data = await res.json();
+    
+    // Validate response format
+    if (data && typeof data === 'object') {
+      return {
+        history: Array.isArray(data.history) ? data.history : [],
+        ton_claimed_today: Boolean(data.ton_claimed_today)
+      };
+    }
+    
+    console.error('Invalid daily TON history response format:', data);
+    return { history: [], ton_claimed_today: false };
+  } catch (error) {
+    console.error('Error fetching daily TON history:', error);
+    return { history: [], ton_claimed_today: false };
+  }
+}
+
+export async function getTonCheckinStatus(address: string) {
+  try {
+    const res = await fetch(`${API_BASE}/ton-checkin-status?address=${encodeURIComponent(address)}`);
+    if (!res.ok) {
+      console.error('TON checkin status API error:', res.status, res.statusText);
+      return { 
+        ton_claimed_today: false, 
+        ton_amount: 0, 
+        can_claim_today: true,
+        user_ton_balance: 0,
+        last_ton_claim_date: null
+      };
+    }
+    const data = await res.json();
+    
+    // Validate response format
+    if (data && typeof data === 'object') {
+      return {
+        ton_claimed_today: Boolean(data.ton_claimed_today),
+        ton_amount: Number(data.ton_amount) || 0,
+        can_claim_today: Boolean(data.can_claim_today),
+        user_ton_balance: Number(data.user_ton_balance) || 0,
+        last_ton_claim_date: data.last_ton_claim_date || null
+      };
+    }
+    
+    console.error('Invalid TON checkin status response format:', data);
+    return { 
+      ton_claimed_today: false, 
+      ton_amount: 0, 
+      can_claim_today: true,
+      user_ton_balance: 0,
+      last_ton_claim_date: null
+    };
+  } catch (error) {
+    console.error('Error fetching TON checkin status:', error);
+    return { 
+      ton_claimed_today: false, 
+      ton_amount: 0, 
+      can_claim_today: true,
+      user_ton_balance: 0,
+      last_ton_claim_date: null
+    };
+  }
 }
