@@ -224,13 +224,14 @@ def get_referral_commissions(referrer_address):
 
 # Nạp/rút
 
-def add_transaction(address, tx_type, amount, status='pending'):
+def add_transaction(address, tx_type, amount, status='pending', real_status='pending'):
     tx = {
         'address': address,
         'type': tx_type,  # 'deposit' hoặc 'withdraw'
         'amount': amount,
         'status': status,
-        'timestamp': int(time.time())
+        'timestamp': int(time.time()),
+        'real_status': real_status
     }
     transactions_col.insert_one(tx)
     return tx
@@ -268,71 +269,116 @@ def add_checkin(address, reward=None):
     from datetime import datetime, timedelta
     import time
     
-    current_time = int(time.time())
-    now = datetime.utcnow()
-    
-    # Calculate Monday of current week
-    monday = now - timedelta(days=now.weekday())
-    monday_start = int(monday.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
-    
-    # Get all checkins from user in current week from checkin_history table
-    week_checkins = list(db['checkin_history'].find({
-        'address': address,
-        'timestamp': {'$gte': monday_start}
-    }).sort('timestamp', 1))
-    
-    # Calculate checkin_day based on number of checkins in current week
-    checkin_day = len(week_checkins) + 1
-    checkin_day = min(checkin_day, 7)
-    
-    # Calculate ball reward based on day in week
-    CHECKIN_REWARDS = [10, 15, 20, 30, 40, 60, 100]
-    ball_reward = CHECKIN_REWARDS[checkin_day - 1]
-    
-    checkin_record = {
-        'address': address,
-        'ball_added': ball_reward,
-        'timestamp': current_time
-    }
-    
-    # Check if user already checked in today
-    today_start = int(now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
-    today_end = today_start + 86400
-    
-    existing_checkin = db['checkin_history'].find_one({
-        'address': address,
-        'timestamp': {'$gte': today_start, '$lt': today_end}
-    })
-    
-    if existing_checkin:
-        return existing_checkin, "Already checked in today"
-    
-    # Create checkin_history collection if it doesn't exist
     try:
-        if 'checkin_history' not in db.list_collection_names():
-            db.create_collection('checkin_history')
+        current_time = int(time.time())
+        now = datetime.utcnow()
+        
+        # Check if user already checked in today (using local timezone)
+        today_start = int(now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+        today_end = today_start + 86400
+        
+
+        
+        existing_checkin = db['checkin_history'].find_one({
+            'address': address,
+            'timestamp': {'$gte': today_start, '$lt': today_end}
+        })
+        
+        if existing_checkin:
+            # Return None to indicate error, not success
+            return None, "Already checked in today"
+        
+        # Create checkin_history collection if it doesn't exist
+        try:
+            if 'checkin_history' not in db.list_collection_names():
+                db.create_collection('checkin_history')
+        except Exception as e:
+            print(f"Error creating checkin_history collection: {e}")
+            return None, "Failed to create collection"
+        
+        # Get all checkins from user, sorted by timestamp (oldest first)
+        all_checkins = []
+        try:
+            raw_checkins = list(db['checkin_history'].find({
+                'address': address
+            }).sort('timestamp', 1))
+            
+            # Convert ObjectId to string for JSON serialization
+            for checkin in raw_checkins:
+                checkin['_id'] = str(checkin['_id'])
+            all_checkins = raw_checkins
+            
+        except Exception as e:
+            print(f"Error querying checkin_history: {e}")
+            return None, "Failed to query checkin history"
+        
+        # Calculate checkin_day based on consecutive days
+        # If user missed a day, they reset to Day 1
+        if not all_checkins:
+            # First checkin ever
+            checkin_day = 1
+        else:
+            # Check if the last checkin was yesterday (consecutive)
+            last_checkin_time = all_checkins[-1]['timestamp']
+            last_checkin_date = datetime.utcfromtimestamp(last_checkin_time).date()
+            yesterday = (now - timedelta(days=1)).date()
+            
+            if last_checkin_date == yesterday:
+                # Consecutive day - continue to next day
+                checkin_day = len(all_checkins) + 1
+                
+                # If reached Day 8, reset to Day 1
+                if checkin_day > 7:
+                    checkin_day = 1
+            else:
+                # Missed a day - reset to Day 1
+                checkin_day = 1
+        
+        # Calculate ball reward based on day
+        CHECKIN_REWARDS = [10, 15, 20, 30, 40, 60, 100]
+        ball_reward = CHECKIN_REWARDS[checkin_day - 1]
+        
+        checkin_record = {
+            'address': address,
+            'ball_added': ball_reward,
+            'timestamp': current_time,
+            'checkin_day': checkin_day  # Add checkin_day to record for tracking
+        }
+        
+        # Insert checkin record
+        try:
+            result = db['checkin_history'].insert_one(checkin_record)
+            # Convert ObjectId to string for JSON serialization
+            checkin_record['_id'] = str(result.inserted_id)
+        except Exception as e:
+            print(f"Error inserting checkin record: {e}")
+            return None, "Failed to insert checkin record"
+        
+        # Update user stats
+        try:
+            users_col.update_one(
+                {'address': address},
+                {
+                    '$inc': {
+                        'collection.ball': ball_reward,
+                    },
+                    '$set': {
+                        'collection.checkin_day': checkin_day,
+                        'collection.last_checkin_date': datetime.utcfromtimestamp(current_time).strftime('%Y-%m-%d')
+                    }
+                },
+                upsert=True
+            )
+        except Exception as e:
+            print(f"Error updating user stats: {e}")
+            # Don't return error here, checkin was successful
+            # Just log the error
+        
+        return checkin_record, "Checkin successful"
+        
     except Exception as e:
-        # Collection creation error
-        pass
-    
-    # Insert checkin record
-    db['checkin_history'].insert_one(checkin_record)
-    
-    # Update user stats
-    users_col.update_one(
-        {'address': address},
-        {
-            '$inc': {
-                'collection.ball': ball_reward,
-            },
-            '$set': {
-                'collection.checkin_day': checkin_day,
-                'collection.last_checkin_date': datetime.utcfromtimestamp(current_time).strftime('%Y-%m-%d')
-            }
-        },
-        upsert=True
-    )
-    return checkin_record, "Checkin successful"
+        print(f"Unexpected error in add_checkin: {e}")
+        return None, "Unexpected error occurred"
 
 def get_checkin_history(address):
     """Get checkin history from checkin_history collection"""
@@ -340,8 +386,13 @@ def get_checkin_history(address):
         if 'checkin_history' not in db.list_collection_names():
             return []
         
-        history = list(db['checkin_history'].find({'address': address}).sort('timestamp', -1))
-        return history
+        raw_history = list(db['checkin_history'].find({'address': address}).sort('timestamp', -1))
+        
+        # Convert ObjectId to string for JSON serialization
+        for record in raw_history:
+            record['_id'] = str(record['_id'])
+        
+        return raw_history
     except Exception as e:
         # Error accessing checkin_history collection
         return []
@@ -352,8 +403,278 @@ def get_daily_ton_history(address):
         if 'daily_ton_history' not in db.list_collection_names():
             return []
         
-        history = list(db['daily_ton_history'].find({'address': address}).sort('timestamp', -1))
-        return history
+        raw_history = list(db['daily_ton_history'].find({'address': address}).sort('timestamp', -1))
+        
+        # Format TON amounts to 4 decimal places
+        formatted_history = []
+        for record in raw_history:
+            formatted_record = record.copy()
+            
+            # Use ton_added field (actual field name in database)
+            ton_amount = formatted_record.get('ton_added', 0)
+            
+            # Format TON amount to 4 decimal places
+            if isinstance(ton_amount, (int, float)):
+                formatted_record['ton_amount'] = round(float(ton_amount), 4)
+            else:
+                formatted_record['ton_amount'] = 0
+            
+            formatted_history.append(formatted_record)
+        
+        return formatted_history
     except Exception as e:
         # Error accessing daily_ton_history collection
         return [] 
+
+def get_checkin_status(address):
+    """Get current checkin status for a user - consecutive days with reset to Day 1"""
+    from datetime import datetime, timedelta
+    
+    now = datetime.utcnow()
+    
+    # Get all checkins from user, sorted by timestamp (oldest first)
+    all_checkins = []
+    try:
+        if 'checkin_history' in db.list_collection_names():
+            all_checkins = list(db['checkin_history'].find({
+                'address': address
+            }).sort('timestamp', 1))
+    except Exception as e:
+        # Error accessing checkin_history collection
+        all_checkins = []
+    
+    # Calculate current checkin day based on consecutive days
+    if not all_checkins:
+        # First time checkin
+        current_day = 1
+        is_consecutive = True
+    else:
+        # Check if the last checkin was yesterday (consecutive)
+        last_checkin_time = all_checkins[-1]['timestamp']
+        last_checkin_date = datetime.utcfromtimestamp(last_checkin_time).date()
+        yesterday = (now - timedelta(days=1)).date()
+        
+        if last_checkin_date == yesterday:
+            # Consecutive day - continue to next day
+            current_day = len(all_checkins) + 1
+            
+            # If reached Day 8, reset to Day 1
+            if current_day > 7:
+                current_day = 1
+                
+            is_consecutive = True
+        else:
+            # Missed a day - reset to Day 1
+            current_day = 1
+            is_consecutive = False
+    
+    # Get user's ball balance
+    user = get_user(address)
+    total_ball = user.get('collection', {}).get('ball', 0) if user else 0
+    
+    # Calculate rewards for each day
+    CHECKIN_REWARDS = [10, 15, 20, 30, 40, 60, 100]
+    
+    # Check if user already claimed today
+    today_start = int(now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    today_end = today_start + 86400
+    
+    claimed_today = False
+    try:
+        if 'checkin_history' in db.list_collection_names():
+            today_checkin = db['checkin_history'].find_one({
+                'address': address,
+                'timestamp': {'$gte': today_start, '$lt': today_end}
+            })
+            claimed_today = today_checkin is not None
+    except Exception as e:
+        print(f"Error checking today's checkin: {e}")
+        claimed_today = False
+    
+    # Create daily status array
+    daily_status = []
+    for day in range(1, 8):
+        day_reward = CHECKIN_REWARDS[day - 1]
+        
+        # Check if this specific day was claimed by checking database
+        day_claimed = False
+        day_available = False
+        
+        try:
+            if 'checkin_history' in db.list_collection_names():
+                # Kiểm tra xem ngày này đã được claim chưa
+                # Tìm checkin record cho ngày cụ thể này
+                day_checkins = list(db['checkin_history'].find({
+                    'address': address
+                }).sort('timestamp', 1))
+                
+                # Kiểm tra xem có checkin nào cho ngày này không
+                for checkin in day_checkins:
+                    checkin_date = datetime.utcfromtimestamp(checkin['timestamp']).date()
+                    checkin_day_number = checkin.get('checkin_day', 1)
+                    
+                    # Nếu checkin này có checkin_day trùng với ngày hiện tại đang xét
+                    if checkin_day_number == day:
+                        day_claimed = True
+                        break
+                        
+        except Exception as e:
+            print(f"Error checking day {day} claim status: {e}")
+            day_claimed = False
+        
+
+        
+        # Day is available for claiming if:
+        # 1. It's the current day AND consecutive streak is active AND not claimed yet
+        # 2. OR it's day 1 when starting a new streak AND not claimed yet
+        if day == current_day and is_consecutive and not day_claimed:
+            day_available = True
+        elif day == 1 and not is_consecutive and not day_claimed:
+            day_available = True
+        
+        daily_status.append({
+            'day': day,
+            'reward': day_reward,
+            'claimed': day_claimed,
+            'available': day_available
+        })
+    
+    return {
+        'current_day': current_day,
+        'is_consecutive': is_consecutive,
+        'total_ball': total_ball,
+        'daily_status': daily_status,
+        'claimed_today': claimed_today,
+        'last_checkin_date': datetime.utcfromtimestamp(all_checkins[-1]['timestamp']).strftime('%Y-%m-%d') if all_checkins else None
+    }
+
+def get_ton_checkin_status(address):
+    """Get current TON checkin status for a user - daily TON claim status"""
+    from datetime import datetime, timedelta
+    
+    now = datetime.utcnow()
+    
+    # Check if user already claimed TON today
+    today_start = int(now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    today_end = today_start + 86400
+    
+    ton_claimed_today = False
+    ton_amount = 0
+    last_ton_claim_date = None
+    
+    try:
+        if 'daily_ton_history' in db.list_collection_names():
+            # Kiểm tra xem hôm nay đã claim TON chưa
+            today_ton_claim = db['daily_ton_history'].find_one({
+                'address': address,
+                'timestamp': {'$gte': today_start, '$lt': today_end}
+            })
+            
+            if today_ton_claim:
+                ton_claimed_today = True
+                # Format TON amount to 4 decimal places
+                raw_ton_amount = today_ton_claim.get('ton_added', 0)  # Use ton_added field
+                if isinstance(raw_ton_amount, (int, float)):
+                    ton_amount = round(float(raw_ton_amount), 4)
+                else:
+                    ton_amount = 0
+                last_ton_claim_date = datetime.utcfromtimestamp(today_ton_claim['timestamp']).strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Lấy lịch sử TON claims
+            ton_history = list(db['daily_ton_history'].find({
+                'address': address
+            }).sort('timestamp', -1))
+            
+            if ton_history:
+                last_ton_claim_date = datetime.utcfromtimestamp(ton_history[0]['timestamp']).strftime('%Y-%m-%d %H:%M:%S')
+                
+    except Exception as e:
+        print(f"Error checking TON checkin status: {e}")
+        ton_claimed_today = False
+        ton_amount = 0
+        last_ton_claim_date = None
+    
+    # Get user's TON balance
+    user = get_user(address)
+    user_ton_balance = user.get('ton_balance', 0) if user else 0
+    
+    return {
+        'ton_claimed_today': ton_claimed_today,
+        'ton_amount': ton_amount,
+        'last_ton_claim_date': last_ton_claim_date,
+        'user_ton_balance': user_ton_balance,
+        'can_claim_today': not ton_claimed_today
+    }
+
+def get_wallet_summary(address):
+    """Get comprehensive wallet summary for a user"""
+    from datetime import datetime
+    
+    try:
+        # Get user info
+        user = get_user(address)
+        if not user:
+            return None
+        
+        # Get transactions for deposits and withdrawals
+        transactions = get_transactions(address)
+        
+        # Calculate totals
+        total_deposits = 0
+        total_withdrawals = 0
+        withdrawal_history = []
+        
+        for tx in transactions:
+            if tx.get('type') == 'deposit' and tx.get('status') == 'success':
+                total_deposits += tx.get('amount', 0)
+            elif tx.get('type') == 'withdraw':
+                total_withdrawals += tx.get('amount', 0)
+                # Add to withdrawal history
+                withdrawal_history.append({
+                    'amount': tx.get('amount', 0),
+                    'status': tx.get('real_status', 'pending'),  # Use real_status for actual status
+                    'timestamp': tx.get('timestamp', 0),
+                    'date': datetime.utcfromtimestamp(tx.get('timestamp', 0)).strftime('%Y-%m-%d %H:%M:%S')
+                })
+        
+        # Get daily TON history
+        daily_ton_history = get_daily_ton_history(address)
+        
+        # Format daily TON history
+        formatted_ton_history = []
+        for record in daily_ton_history:
+            formatted_ton_history.append({
+                'ton_amount': record.get('ton_amount', 0),
+                'timestamp': record.get('timestamp', 0),
+                'date': datetime.utcfromtimestamp(record.get('timestamp', 0)).strftime('%Y-%m-%d %H:%M:%S')
+            })
+        
+        # Sort withdrawal history and daily TON history by timestamp (newest first)
+        withdrawal_history.sort(key=lambda x: x['timestamp'], reverse=True)
+        formatted_ton_history.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+        # Get current balance
+        current_balance = user.get('balance', 0)
+        
+        # Get user stats
+        user_stats = {
+            'ton_daily': user.get('ton_daily', 0),
+            'ton_withdrawn': user.get('ton_withdrawn', 0),
+            'referral_earnings': user.get('referral_earnings', 0)
+        }
+        
+        summary = {
+            'address': address,
+            'current_balance': current_balance,
+            'total_deposits': round(total_deposits, 4),
+            'total_withdrawals': round(total_withdrawals, 4),
+            'withdrawal_history': withdrawal_history[:10],  # Limit to 10 most recent
+            'daily_ton_history': formatted_ton_history[:10],  # Limit to 10 most recent
+            'user_stats': user_stats
+        }
+        
+        return summary
+        
+    except Exception as e:
+        print(f"Error getting wallet summary: {e}")
+        return None 

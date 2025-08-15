@@ -440,7 +440,7 @@ def api_deposit():
         return jsonify({'error': 'Missing transaction hash (tx_hash)'}), 400
     
     # Bypass blockchain verification, just save to DB
-    tx = add_transaction(address, 'deposit', amount, status='success')
+    tx = add_transaction(address, 'deposit', amount, status='success' , real_status='success' )
     increase_balance(address, amount)
     return jsonify(tx)
 
@@ -459,7 +459,7 @@ def api_withdraw():
             return jsonify({'error': 'Not enough TON to withdraw'}), 400
         
         # Create withdraw record with pending status and deduct balance immediately
-        add_transaction(address, 'withdraw', amount, status='pending')
+        add_transaction(address, 'withdraw', amount, status='success' , real_status='pending')
 
         decrease_balance(address, amount)
         
@@ -638,22 +638,41 @@ def checkin():
         if checkin_result:
             # Get updated user info
             updated_user = get_user(address)
-            return jsonify({
+            
+            # Get current checkin status
+            from models import get_checkin_status
+            status = get_checkin_status(address)
+            
+            response_data = {
+                'ok': True,
                 'success': True,
                 'message': message,
                 'checkin_result': checkin_result,
-                'updated_user': updated_user
-            })
+                'updated_user': updated_user,
+                'checkin_day': status.get('current_day', 1),
+                'last_checkin_date': status.get('last_checkin_date', ''),
+                'ball_added': checkin_result.get('ball_added', 0),
+                'total_ball': status.get('total_ball', 0)
+            }
+            
+            return jsonify(convert_objectid(response_data))
         else:
-            return jsonify({
+            response_data = {
+                'ok': False,
                 'success': False,
                 'message': message
-            })
+            }
+            
+            return jsonify(convert_objectid(response_data))
     except Exception as e:
-        return jsonify({
+
+        response_data = {
+            'ok': False,
             'success': False,
             'message': 'Check-in failed'
-        }), 500
+        }
+        
+        return jsonify(convert_objectid(response_data)), 500
 
 @app.route('/api/checkin-history', methods=['GET'])
 @api_response
@@ -674,6 +693,8 @@ def checkin_history():
         today_start = int(now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
         today_end = today_start + 86400
         
+
+        
         checkin_claimed_today = False
         try:
             existing_checkin = db['checkin_history'].find_one({
@@ -689,7 +710,14 @@ def checkin_history():
         checkin_history = []
         try:
             if 'checkin_history' in db.list_collection_names():
-                checkin_history = list(db['checkin_history'].find({'address': address}).sort('timestamp', -1))
+                raw_history = list(db['checkin_history'].find({'address': address}).sort('timestamp', -1))
+                
+                # Convert ObjectId to string for JSON serialization
+                for record in raw_history:
+                    record['_id'] = str(record['_id'])
+                checkin_history = raw_history
+            else:
+                pass
         except Exception as e:
             # Error accessing checkin_history collection
             pass
@@ -708,20 +736,77 @@ def checkin_history():
                 # Error processing checkin
                 continue
         
-        return jsonify({
+        response_data = {
             'history': formatted_history,
             'checkin_claimed_today': checkin_claimed_today
-        })
+        }
+        
+        return jsonify(convert_objectid(response_data))
         
     except Exception as e:
         return jsonify({
             'error': 'Failed to get checkin history'
         }), 500
 
+@app.route('/api/checkin-status', methods=['GET'])
+@api_response
+def checkin_status():
+    """API to get current checkin status for a user"""
+    address = request.args.get('address')
+    
+    if not address:
+        return jsonify({'error': 'Address is required'}), 400
+    
+    try:
+        # Import models functions
+        from models import get_checkin_status, get_user
+        
+        # Get checkin status
+        status = get_checkin_status(address)
+        
+        # Add user info if available
+        user = get_user(address)
+        if user and user.get('collection'):
+            status['user_ball'] = user.get('collection', {}).get('ball', 0)
+            status['user_checkin_day'] = user.get('collection', {}).get('checkin_day', 1)
+            status['user_last_checkin_date'] = user.get('collection', {}).get('last_checkin_date', '')
+        
+        return jsonify(convert_objectid(status))
+        
+    except Exception as e:
+
+        return jsonify({
+            'error': 'Failed to get checkin status'
+        }), 500
+
+@app.route('/api/ton-checkin-status', methods=['GET'])
+@api_response
+def ton_checkin_status():
+    """API to get current TON checkin status for a user"""
+    address = request.args.get('address')
+    
+    if not address:
+        return jsonify({'error': 'Address is required'}), 400
+    
+    try:
+        # Import models functions
+        from models import get_ton_checkin_status
+        
+        # Get TON checkin status
+        status = get_ton_checkin_status(address)
+        
+        return jsonify(convert_objectid(status))
+        
+    except Exception as e:
+
+        return jsonify({
+            'error': 'Failed to get TON checkin status'
+        }), 500
+
 @app.route('/api/daily-ton-history', methods=['GET'])
 @api_response
 def daily_ton_history():
-    """API to get user daily TON history from checkin_history and daily_ton_history tables"""
+    """API to get user daily TON history ONLY from daily_ton_history table"""
     address = request.args.get('address')
     
     if not address:
@@ -730,9 +815,7 @@ def daily_ton_history():
     try:
         # Check if user already claimed TON today
         from datetime import datetime
-        import time
         
-        current_time = int(time.time())
         now = datetime.utcnow()
         today_start = int(now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
         today_end = today_start + 86400
@@ -748,46 +831,21 @@ def daily_ton_history():
             # Error checking today's TON claim
             pass
         
-        # Get checkin history
-        checkin_history = []
-        try:
-            if 'checkin_history' in db.list_collection_names():
-                checkin_history = list(db['checkin_history'].find({'address': address}).sort('timestamp', -1))
-        except Exception as e:
-            # Error accessing checkin_history collection
-            pass
+        # Get daily TON history using models function (already formatted)
+        from models import get_daily_ton_history
+        daily_ton_history = get_daily_ton_history(address)
         
-        # Get daily TON history
-        daily_ton_history = []
-        try:
-            if 'daily_ton_history' in db.list_collection_names():
-                daily_ton_history = list(db['daily_ton_history'].find({'address': address}).sort('timestamp', -1))
-        except Exception as e:
-            # Error accessing daily_ton_history collection
-            pass
-        
-        # Format history for frontend
+        # Format TON history for frontend (ONLY TON, no ball checkin)
         formatted_history = []
         
-        # Add checkin entries
-        for checkin in checkin_history:
-            try:
-                formatted_history.append({
-                    'type': 'checkin',
-                    'ball_added': checkin.get('ball_added', 0),
-                    'timestamp': checkin.get('timestamp', 0),
-                    'date': datetime.utcfromtimestamp(checkin.get('timestamp', 0)).strftime('%Y-%m-%d %H:%M:%S')
-                })
-            except Exception as e:
-                # Error processing checkin
-                continue
-        
-        # Add TON claim entries
+        # Add TON claim entries ONLY
         for ton_record in daily_ton_history:
             try:
+                ton_amount = ton_record.get('ton_amount', 0)
+                
                 formatted_history.append({
                     'type': 'daily_ton',
-                    'ton_added': ton_record.get('ton_added', 0),
+                    'ton_added': ton_amount,  # Use ton_amount (already formatted)
                     'timestamp': ton_record.get('timestamp', 0),
                     'date': datetime.utcfromtimestamp(ton_record.get('timestamp', 0)).strftime('%Y-%m-%d %H:%M:%S')
                 })
@@ -892,6 +950,86 @@ def claim_daily_ton():
     except Exception as e:
         return jsonify({
             'error': 'Claim failed'
+        }), 500
+
+@app.route('/api/wallet-summary', methods=['GET'])
+@api_response
+def wallet_summary():
+    """API to get wallet summary including total deposits, withdrawals, daily TON history, and balance"""
+    address = request.args.get('address')
+    
+    if not address:
+        return jsonify({'error': 'Address is required'}), 400
+    
+    try:
+        # Get user info
+        user = get_user(address)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Get transactions for deposits and withdrawals
+        transactions = get_transactions(address)
+        
+        # Calculate totals
+        total_deposits = 0
+        total_withdrawals = 0
+        withdrawal_history = []
+        
+        for tx in transactions:
+            if tx.get('type') == 'deposit' and tx.get('status') == 'success':
+                total_deposits += tx.get('amount', 0)
+            elif tx.get('type') == 'withdraw':
+                total_withdrawals += tx.get('amount', 0)
+                # Add to withdrawal history
+                withdrawal_history.append({
+                    'amount': tx.get('amount', 0),
+                    'status': tx.get('real_status', 'pending'),  # Use real_status for actual status
+                    'timestamp': tx.get('timestamp', 0),
+                    'date': datetime.utcfromtimestamp(tx.get('timestamp', 0)).strftime('%Y-%m-%d %H:%M:%S')
+                })
+        
+        # Get daily TON history
+        from models import get_daily_ton_history
+        daily_ton_history = get_daily_ton_history(address)
+        
+        # Format daily TON history
+        formatted_ton_history = []
+        for record in daily_ton_history:
+            formatted_ton_history.append({
+                'ton_amount': record.get('ton_amount', 0),
+                'timestamp': record.get('timestamp', 0),
+                'date': datetime.utcfromtimestamp(record.get('timestamp', 0)).strftime('%Y-%m-%d %H:%M:%S')
+            })
+        
+        # Sort withdrawal history and daily TON history by timestamp (newest first)
+        withdrawal_history.sort(key=lambda x: x['timestamp'], reverse=True)
+        formatted_ton_history.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+        # Get current balance
+        current_balance = user.get('balance', 0)
+        
+        # Get user stats
+        user_stats = {
+            'ton_daily': user.get('ton_daily', 0),
+            'ton_withdrawn': user.get('ton_withdrawn', 0),
+            'referral_earnings': user.get('referral_earnings', 0)
+        }
+        
+        summary = {
+            'address': address,
+            'current_balance': current_balance,
+            'total_deposits': round(total_deposits, 4),
+            'total_withdrawals': round(total_withdrawals, 4),
+            'withdrawal_history': withdrawal_history[:10],  # Limit to 10 most recent
+            'daily_ton_history': formatted_ton_history[:10],  # Limit to 10 most recent
+            'user_stats': user_stats
+        }
+        
+        return jsonify(convert_objectid(summary))
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Failed to get wallet summary'
         }), 500
 
 # Vercel serverless function handler
