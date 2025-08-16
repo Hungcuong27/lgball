@@ -162,6 +162,8 @@ const LANGUAGES = {
       error_try_again: 'An error occurred, please try again later',
       received_prefix: '+',
       claim_ton_daily: 'Claim TON Daily',
+      first_claim_notice: 'You can claim daily TON from tomorrow onwards',
+      first_claim_today: 'First claim today - No TON reward',
   },
   ko: {
     home: '홈',
@@ -243,6 +245,8 @@ const LANGUAGES = {
       error_try_again: '오류가 발생했습니다. 잠시 후 다시 시도해 주세요',
       received_prefix: '+',
       claim_ton_daily: '오늘의 TON 수령',
+      first_claim_notice: '내일부터 일일 TON을 수령할 수 있습니다',
+      first_claim_today: '오늘 첫 수령 - TON 보상 없음',
   }
 };
 
@@ -318,13 +322,16 @@ function App() {
     can_claim_today: boolean;
     user_ton_balance: number;
     last_ton_claim_date: string | null;
+    is_first_claim?: boolean;
   }>({
     ton_claimed_today: false,
     ton_amount: 0,
     can_claim_today: true,
     user_ton_balance: 0,
-    last_ton_claim_date: null
+    last_ton_claim_date: null,
+    is_first_claim: true  // Temporarily hardcode for testing
   });
+  const [isFirstClaim, setIsFirstClaim] = useState<boolean>(false);
   const getTodayISO = () => {
     const now = new Date();
     return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
@@ -810,6 +817,19 @@ function App() {
         });
     }
   }, [wallet, nav]);
+  
+  // Check if user is first time claiming daily TON
+  useEffect(() => {
+    if (wallet && wallet.account && wallet.account.address) {
+      getTonCheckinStatus(wallet.account.address).then(status => {
+        if (status && status.is_first_claim !== undefined) {
+          setIsFirstClaim(status.is_first_claim);
+        }
+      }).catch(err => {
+        console.error('getTonCheckinStatus error:', err);
+      });
+    }
+  }, [wallet]);
 
   // Lấy lịch sử mở bóng khi vào màn history
   useEffect(() => {
@@ -1843,7 +1863,8 @@ function App() {
                     
                     {/* TON Check-in row with Claim button */}
                     <div style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      display: 'flex', 
+                      flexDirection: 'column',
                       background: 'linear-gradient(135deg, #1b2a38 0%, #161c29 100%)',
                       padding: 'clamp(8px, 2.5vw, 12px) clamp(10px, 3vw, 14px)', 
                       border: '1px solid #2a3346', 
@@ -1855,10 +1876,55 @@ function App() {
                         color: '#4CAF50', 
                         fontWeight: 'bold', 
                         fontSize: 'clamp(12px, 3.5vw, 16px)',
-                        flexShrink: 0
+                        marginBottom: 8
                       }}>{t.ton_checkin_title || 'TON Check-in'}</div>
-                      {wallet && (
-                        <button
+                                              {wallet && (
+                          <button
+                          style={{
+                            width: '100%',
+                            maxWidth: '200px',
+                            alignSelf: 'center',
+                            padding: '8px 12px',
+                            borderRadius: 8,
+                            border: 'none',
+                            background: (() => {
+                              const isFirstTimeClaim = tonCheckinStatus.is_first_claim !== undefined ? 
+                                tonCheckinStatus.is_first_claim : isFirstClaim;
+                              const forceFirstClaim = tonCheckinStatus.ton_amount === 0 && !tonCheckinStatus.last_ton_claim_date;
+                              const shouldBeGray = isFirstTimeClaim || forceFirstClaim;
+                              if (tonCheckinStatus.ton_claimed_today) return '#1b2d1b';
+                              if (tonClaimMessage === (t.processing_transaction || 'Processing...')) return '#666';
+                              if (shouldBeGray) return '#666';
+                              return 'linear-gradient(135deg, #00d084 0%, #00a37a 100%)';
+                            })(),
+                            color: tonCheckinStatus.ton_claimed_today ? '#4CAF50' : 
+                                   tonClaimMessage === (t.processing_transaction || 'Processing...') ? '#ccc' : 
+                                   isFirstClaim ? '#ccc' : '#0e1a1f',
+                            fontWeight: 'bold',
+                            cursor: (() => {
+                              const isFirstTimeClaim = tonCheckinStatus.is_first_claim !== undefined ? 
+                                tonCheckinStatus.is_first_claim : isFirstClaim;
+                              const forceFirstClaim = tonCheckinStatus.ton_amount === 0 && !tonCheckinStatus.last_ton_claim_date;
+                              const shouldBeDisabled = isFirstTimeClaim || forceFirstClaim;
+                              const canClick = tonCheckinStatus.can_claim_today && tonClaimMessage !== (t.processing_transaction || 'Processing...') && !shouldBeDisabled;
+                              return canClick ? 'pointer' : 'not-allowed';
+                            })(),
+                            fontSize: 'clamp(12px, 3.5vw, 14px)',
+                            boxShadow: tonCheckinStatus.ton_claimed_today ? 'none' : 
+                                      tonClaimMessage === (t.processing_transaction || 'Processing...') ? 'none' :
+                                      isFirstClaim ? 'none' :
+                                      '0 4px 12px rgba(0, 208, 132, 0.3)',
+                            opacity: (() => {
+                              const isFirstTimeClaim = tonCheckinStatus.is_first_claim !== undefined ? 
+                                tonCheckinStatus.is_first_claim : isFirstClaim;
+                              const forceFirstClaim = tonCheckinStatus.ton_amount === 0 && !tonCheckinStatus.last_ton_claim_date;
+                              const shouldBeDisabled = isFirstTimeClaim || forceFirstClaim;
+                              const shouldBeOpaque = tonCheckinStatus.can_claim_today && tonClaimMessage !== (t.processing_transaction || 'Processing...') && !shouldBeDisabled;
+                              return shouldBeOpaque ? 1 : 0.7;
+                            })(),
+                            whiteSpace: 'nowrap',
+                            minWidth: 'fit-content'
+                          }}
                           onClick={async () => {
                             // Chỉ cho phép claim nếu chưa claim hôm nay
                             if (!tonCheckinStatus.can_claim_today) {
@@ -1869,6 +1935,19 @@ function App() {
                             
                             // Prevent multiple clicks while processing
                             if (tonClaimMessage === (t.processing_transaction || 'Processing...')) {
+                              return;
+                            }
+                            
+                            // Prevent claim if this is first time (no TON reward)
+                            
+                            // Check if this is first claim (either from backend or fallback to local state)
+                            const isFirstTimeClaim = tonCheckinStatus.is_first_claim !== undefined ? 
+                              tonCheckinStatus.is_first_claim : isFirstClaim;
+                            
+                            // Force check first claim by checking if user has any TON history
+                            if (isFirstTimeClaim || (tonCheckinStatus.ton_amount === 0 && !tonCheckinStatus.last_ton_claim_date)) {
+                              setTonClaimMessage(t.first_claim_today);
+                              setTimeout(() => setTonClaimMessage(''), 3000);
                               return;
                             }
                             
@@ -1937,6 +2016,15 @@ function App() {
                                     // Silent fail on status reload
                                   });
                                   
+                                  // Check if this is first claim
+                                  getTonCheckinStatus(wallet.account.address).then(status => {
+                                    if (status && status.is_first_claim !== undefined) {
+                                      setIsFirstClaim(status.is_first_claim);
+                                    }
+                                  }).catch(err => {
+                                    // Silent fail on first claim check
+                                  });
+                                  
                                   // Reload user info to get updated TON balance from backend
                                 const reloadUserInfo = async () => {
                                   try {
@@ -1996,31 +2084,48 @@ function App() {
                               setTimeout(() => setTonClaimMessage(''), 2000);
                             }
                           }}
-                          style={{
-                            padding: '8px 12px',
-                            borderRadius: 8,
-                            border: 'none',
-                            background: tonCheckinStatus.ton_claimed_today ? '#1b2d1b' : 
-                                       tonClaimMessage === (t.processing_transaction || 'Processing...') ? '#666' : 
-                                       'linear-gradient(135deg, #00d084 0%, #00a37a 100%)',
-                            color: tonCheckinStatus.ton_claimed_today ? '#4CAF50' : 
-                                   tonClaimMessage === (t.processing_transaction || 'Processing...') ? '#ccc' : '#0e1a1f',
-                            fontWeight: 'bold',
-                            cursor: (tonCheckinStatus.can_claim_today && tonClaimMessage !== (t.processing_transaction || 'Processing...')) ? 'pointer' : 'not-allowed',
-                            fontSize: 'clamp(12px, 3.5vw, 14px)',
-                            boxShadow: tonCheckinStatus.ton_claimed_today ? 'none' : 
-                                      tonClaimMessage === (t.processing_transaction || 'Processing...') ? 'none' :
-                                      '0 4px 12px rgba(0, 208, 132, 0.3)',
-                            opacity: (tonCheckinStatus.can_claim_today && tonClaimMessage !== (t.processing_transaction || 'Processing...')) ? 1 : 0.7,
-                            whiteSpace: 'nowrap',
-                            minWidth: 'fit-content'
-                          }}
-                        >
-                          {tonCheckinStatus.ton_claimed_today ? t.claimed_label : 
-                           tonClaimMessage === (t.processing_transaction || 'Processing...') ? 'Processing...' : 
-                           t.claim_ton_daily}
-                        </button>
+
+                                                  >
+                                                         {(() => {
+                               const isFirstTimeClaim = tonCheckinStatus.is_first_claim !== undefined ? 
+                                 tonCheckinStatus.is_first_claim : isFirstClaim;
+                               const forceFirstClaim = tonCheckinStatus.ton_amount === 0 && !tonCheckinStatus.last_ton_claim_date;
+                               const shouldShowFirstClaim = isFirstTimeClaim || forceFirstClaim;
+                               let buttonText;
+                               if (tonCheckinStatus.ton_claimed_today) {
+                                 buttonText = t.claimed_label;
+                               } else if (tonClaimMessage === (t.processing_transaction || 'Processing...')) {
+                                 buttonText = 'Processing...';
+                               } else if (shouldShowFirstClaim) {
+                                 buttonText = t.first_claim_today;
+                               } else {
+                                 buttonText = t.claim_ton_daily;
+                               }
+                               return buttonText;
+                             })()}
+                          </button>
                       )}
+                      
+                      {/* First claim notice */}
+                      {(() => {
+                        const isFirstTimeClaim = tonCheckinStatus.is_first_claim !== undefined ? 
+                          tonCheckinStatus.is_first_claim : isFirstClaim;
+                        const forceFirstClaim = tonCheckinStatus.ton_amount === 0 && !tonCheckinStatus.last_ton_claim_date;
+                        const shouldShowNotice = isFirstTimeClaim || forceFirstClaim;
+                        return shouldShowNotice && (
+                          <div style={{ 
+                            marginTop: 12, 
+                            fontSize: 'clamp(11px, 3vw, 13px)', 
+                            color: '#888', 
+                            textAlign: 'center',
+                            fontStyle: 'italic',
+                            lineHeight: 1.4,
+                            padding: '0 8px'
+                          }}>
+                            {t.first_claim_notice}
+                          </div>
+                        );
+                      })()}
                     </div>
                     {tonClaimMessage && (
                       <div style={{ marginTop: 6, color: '#4CAF50', fontWeight: 'bold', textAlign: 'right' }}>{tonClaimMessage}</div>
@@ -2315,7 +2420,9 @@ function App() {
                     }}>
                       <div>
                         <div style={{ color: '#fff' }}>
-                          From: {c?.referred_address ? `${c.referred_address.slice(0, 8)}...${c.referred_address.slice(-8)}` : 'Unknown'}
+                          From: {c?.referred_friendly_address ? 
+                            `${c.referred_friendly_address.slice(0, 8)}...${c.referred_friendly_address.slice(-8)}` : 
+                            (c?.referred_address ? `${c.referred_address.slice(0, 8)}...${c.referred_address.slice(-8)}` : 'Unknown')}
                         </div>
                         <div style={{ color: '#aaa', fontSize: 11 }}>
                           {c?.chest_type && (

@@ -204,7 +204,8 @@ export async function getTonCheckinStatus(address: string) {
         ton_amount: Number(data.ton_amount) || 0,
         can_claim_today: Boolean(data.can_claim_today),
         user_ton_balance: Number(data.user_ton_balance) || 0,
-        last_ton_claim_date: data.last_ton_claim_date || null
+        last_ton_claim_date: data.last_ton_claim_date || null,
+        is_first_claim: data.is_first_claim !== undefined ? Boolean(data.is_first_claim) : undefined
       };
     }
     
@@ -214,7 +215,8 @@ export async function getTonCheckinStatus(address: string) {
       ton_amount: 0, 
       can_claim_today: true,
       user_ton_balance: 0,
-      last_ton_claim_date: null
+      last_ton_claim_date: null,
+      is_first_claim: undefined
     };
   } catch (error) {
     console.error('Error fetching TON checkin status:', error);
@@ -223,7 +225,8 @@ export async function getTonCheckinStatus(address: string) {
       ton_amount: 0, 
       can_claim_today: true,
       user_ton_balance: 0,
-      last_ton_claim_date: null
+      last_ton_claim_date: null,
+      is_first_claim: undefined
     };
   }
 }
