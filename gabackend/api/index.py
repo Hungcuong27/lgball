@@ -912,7 +912,16 @@ def claim_daily_ton():
         
         # Calculate daily TON reward
         user_ton_daily = user.get('ton_daily', 0)
-        daily_ton_reward = max(0.1, user_ton_daily * 0.1)
+        
+        # Check if this is the first time user claims daily TON
+        first_claim = db['daily_ton_history'].find_one({'address': address})
+        
+        if first_claim:
+            # Not first time, give normal daily TON reward
+            daily_ton_reward = user_ton_daily
+        else:
+            # First time claiming, give 0 TON
+            daily_ton_reward = 0
         
         # Create claim record
         claim_record = {
