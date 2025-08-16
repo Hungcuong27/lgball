@@ -1867,12 +1867,29 @@ function App() {
                               return;
                             }
                             
+                            // Prevent multiple clicks while processing
+                            if (tonClaimMessage === (t.processing_transaction || 'Processing...')) {
+                              return;
+                            }
+                            
                             try {
+                              // Set loading state
+                              setTonClaimMessage(t.processing_transaction || 'Processing...');
+                              
                               const res = await claimDailyTon(wallet.account!.address);
                               
                               if (res && res.success) {
-                                setTonClaimMessage(`${t.received_prefix}${(res.ton_added || 0).toFixed ? (res.ton_added).toFixed(2) : res.ton_added} TON`);
-                                setUserInfo((prev: any) => prev ? { ...prev, balance: (prev.balance || 0) + (res.ton_added || 0) } : prev);
+                                const tonAdded = res.ton_added || 0;
+                                setTonClaimMessage(`${t.received_prefix}${tonAdded.toFixed ? tonAdded.toFixed(2) : tonAdded} TON`);
+                                
+                                // Update balance immediately for instant UI feedback
+                                setUserInfo((prev: any) => {
+                                  const newBalance = prev ? (prev.balance || 0) + tonAdded : tonAdded;
+                                  return prev ? { ...prev, balance: newBalance } : { balance: newBalance };
+                                });
+                                
+                                // Show simple success message
+                                setTonClaimMessage(`${t.received_prefix}${tonAdded.toFixed ? tonAdded.toFixed(2) : tonAdded} TON`);
                                 
                                 // Update TON checkin status immediately for instant UI feedback
                                 setTonCheckinStatus(prev => ({
@@ -1884,7 +1901,7 @@ function App() {
                                 // Add temporary TON record to history for instant UI feedback
                                 const tempTonRecord = {
                                   type: 'daily_ton',
-                                  ton_added: res.ton_added || 0,
+                                  ton_added: tonAdded,
                                   timestamp: Date.now() / 1000,
                                   date: new Date().toLocaleString('en-US', {
                                     year: 'numeric',
@@ -1910,22 +1927,63 @@ function App() {
                                       setDailyTonHistory(data.history);
                                     }
                                   }).catch(err => {
-                                    console.error('Error loading TON history:', err);
+                                    // Silent fail on history reload
                                   });
                                   
                                   // Reload TON checkin status
                                   getTonCheckinStatus(wallet.account.address).then(newStatus => {
                                     setTonCheckinStatus(newStatus);
                                   }).catch(err => {
-                                    console.error('Error loading TON status:', err);
+                                    // Silent fail on status reload
                                   });
                                   
-                                  // Also reload user info to get updated TON balance
-                                  getCollection(wallet.account.address).then(newUserInfo => {
-                                    setUserInfo(newUserInfo);
-                                  }).catch(err => {
-                                    console.error('Error loading user info:', err);
-                                  });
+                                  // Reload user info to get updated TON balance from backend
+                                const reloadUserInfo = async () => {
+                                  try {
+                                    const newUserInfo = await getUser(wallet.account.address);
+                                    if (newUserInfo) {
+                                      // Always use the backend balance as it's the source of truth
+                                      setUserInfo(newUserInfo);
+                                      return newUserInfo;
+                                    }
+                                  } catch (err) {
+                                    return null;
+                                  }
+                                };
+                                
+                                // First reload attempt
+                                reloadUserInfo();
+                                  
+                                  // Additional verification after a delay to ensure backend is fully updated
+                                  setTimeout(async () => {
+                                    if (wallet.account?.address) {
+                                      try {
+                                        const finalUserInfo = await getUser(wallet.account.address);
+                                        if (finalUserInfo && finalUserInfo.balance !== undefined) {
+                                          // Update with the most recent backend data
+                                          setUserInfo(finalUserInfo);
+                                          
+                                          // Check if there's a discrepancy and retry if needed
+                                          const expectedBalance = (userInfo?.balance || 0) + tonAdded;
+                                          if (Math.abs(finalUserInfo.balance - expectedBalance) > 0.0001) {
+                                            // If there's still a discrepancy, try one more reload
+                                            setTimeout(async () => {
+                                              try {
+                                                const retryUserInfo = await getUser(wallet.account.address);
+                                                if (retryUserInfo) {
+                                                  setUserInfo(retryUserInfo);
+                                                }
+                                              } catch (retryErr) {
+                                                // Silent fail on retry
+                                              }
+                                            }, 2000);
+                                          }
+                                        }
+                                      } catch (err) {
+                                        // Silent fail on verification
+                                      }
+                                    }
+                                  }, 3000);
                                 }
                                 
                                 setTimeout(() => setTonClaimMessage(''), 2500);
@@ -1934,7 +1992,6 @@ function App() {
                                 setTimeout(() => setTonClaimMessage(''), 2000);
                               }
                             } catch (e) {
-                              console.error('TON claim error:', e);
                               setTonClaimMessage(t.error_try_again);
                               setTimeout(() => setTonClaimMessage(''), 2000);
                             }
@@ -1943,18 +2000,25 @@ function App() {
                             padding: '8px 12px',
                             borderRadius: 8,
                             border: 'none',
-                            background: tonCheckinStatus.ton_claimed_today ? '#1b2d1b' : 'linear-gradient(135deg, #00d084 0%, #00a37a 100%)',
-                            color: tonCheckinStatus.ton_claimed_today ? '#4CAF50' : '#0e1a1f',
+                            background: tonCheckinStatus.ton_claimed_today ? '#1b2d1b' : 
+                                       tonClaimMessage === (t.processing_transaction || 'Processing...') ? '#666' : 
+                                       'linear-gradient(135deg, #00d084 0%, #00a37a 100%)',
+                            color: tonCheckinStatus.ton_claimed_today ? '#4CAF50' : 
+                                   tonClaimMessage === (t.processing_transaction || 'Processing...') ? '#ccc' : '#0e1a1f',
                             fontWeight: 'bold',
-                            cursor: tonCheckinStatus.can_claim_today ? 'pointer' : 'not-allowed',
+                            cursor: (tonCheckinStatus.can_claim_today && tonClaimMessage !== (t.processing_transaction || 'Processing...')) ? 'pointer' : 'not-allowed',
                             fontSize: 'clamp(12px, 3.5vw, 14px)',
-                            boxShadow: tonCheckinStatus.ton_claimed_today ? 'none' : '0 4px 12px rgba(0, 208, 132, 0.3)',
-                            opacity: tonCheckinStatus.can_claim_today ? 1 : 0.7,
+                            boxShadow: tonCheckinStatus.ton_claimed_today ? 'none' : 
+                                      tonClaimMessage === (t.processing_transaction || 'Processing...') ? 'none' :
+                                      '0 4px 12px rgba(0, 208, 132, 0.3)',
+                            opacity: (tonCheckinStatus.can_claim_today && tonClaimMessage !== (t.processing_transaction || 'Processing...')) ? 1 : 0.7,
                             whiteSpace: 'nowrap',
                             minWidth: 'fit-content'
                           }}
                         >
-                          {tonCheckinStatus.ton_claimed_today ? t.claimed_label : t.claim_ton_daily}
+                          {tonCheckinStatus.ton_claimed_today ? t.claimed_label : 
+                           tonClaimMessage === (t.processing_transaction || 'Processing...') ? 'Processing...' : 
+                           t.claim_ton_daily}
                         </button>
                       )}
                     </div>
