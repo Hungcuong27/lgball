@@ -598,12 +598,17 @@ def get_ton_checkin_status(address):
     user = get_user(address)
     user_ton_balance = user.get('ton_balance', 0) if user else 0
     
+    # Check if this is the first time user claims daily TON
+    first_claim = db['daily_ton_history'].find_one({'address': address})
+    is_first_claim = first_claim is None
+    
     return {
         'ton_claimed_today': ton_claimed_today,
         'ton_amount': ton_amount,
         'last_ton_claim_date': last_ton_claim_date,
         'user_ton_balance': user_ton_balance,
-        'can_claim_today': not ton_claimed_today
+        'can_claim_today': not ton_claimed_today,
+        'is_first_claim': is_first_claim
     }
 
 def get_wallet_summary(address):
