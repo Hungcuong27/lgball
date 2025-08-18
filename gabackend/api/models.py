@@ -526,10 +526,11 @@ def get_checkin_status(address):
         
         # Day is available for claiming if:
         # 1. It's the current day AND consecutive streak is active AND not claimed yet
-        # 2. OR it's day 1 when starting a new streak AND not claimed yet
+        # 2. OR it's day 1 when starting a new streak (can be claimed again after reset)
         if day == current_day and is_consecutive and not day_claimed:
             day_available = True
-        elif day == 1 and not is_consecutive and not day_claimed:
+        elif day == 1 and not is_consecutive:
+            # When reset to day 1, user can claim day 1 again (even if claimed before)
             day_available = True
         
         daily_status.append({
